@@ -278,10 +278,18 @@ contract ProtocolV3TestBase is CommonTestBase {
     for (uint256 i = 0; i < configs.length; i++) {
       if (!_isInAddressArray(usedStrategies, configs[i].interestRateStrategy)) {
         usedStrategies[i] = configs[i].interestRateStrategy;
+        content = _writeStrategyConfig(configs[i].interestRateStrategy);
+      }
+    }
+    string memory output = vm.serializeString('root', 'strategies', content);
+    vm.writeJson(output, path);
+  }
+
+  function _writeStrategyConfig(address _strategy) internal virtual returns (string content) {
+        string memory key = vm.toString(_strategy);
         IDefaultInterestRateStrategy strategy = IDefaultInterestRateStrategy(
           configs[i].interestRateStrategy
         );
-        string memory key = vm.toString(address(strategy));
         vm.serializeString(
           key,
           'baseStableBorrowRate',
@@ -321,10 +329,6 @@ contract ProtocolV3TestBase is CommonTestBase {
           vm.toString(strategy.MAX_EXCESS_USAGE_RATIO())
         );
         content = vm.serializeString(strategiesKey, key, object);
-      }
-    }
-    string memory output = vm.serializeString('root', 'strategies', content);
-    vm.writeJson(output, path);
   }
 
   function _writeReserveConfigs(
