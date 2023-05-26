@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.12;
+pragma solidity ^0.8.10;
 
 import {ConfiguratorInputTypes, DataTypes} from 'aave-address-book/AaveV3.sol';
 import {ReserveConfiguration} from 'aave-v3-core/contracts/protocol/libraries/configuration/ReserveConfiguration.sol';
@@ -230,30 +230,30 @@ contract AaveV3ConfigEngine is IAaveV3ConfigEngine {
         underlyingAsset: ids[i],
         treasury: COLLECTOR,
         incentivesController: REWARDS_CONTROLLER,
-        aTokenName: string.concat('Aave ', context.networkName, ' ', basics[i].assetSymbol),
-        aTokenSymbol: string.concat('a', context.networkAbbreviation, basics[i].assetSymbol),
-        variableDebtTokenName: string.concat(
+        aTokenName: string(string.concat('Aave ', context.networkName, ' ', basics[i].assetSymbol)),
+        aTokenSymbol: string(string.concat('a', context.networkAbbreviation, basics[i].assetSymbol)),
+        variableDebtTokenName: string(string.concat(
           'Aave ',
           context.networkName,
           ' Variable Debt ',
           basics[i].assetSymbol
-        ),
-        variableDebtTokenSymbol: string.concat(
+        )),
+        variableDebtTokenSymbol: string(string.concat(
           'variableDebt',
           context.networkAbbreviation,
           basics[i].assetSymbol
-        ),
-        stableDebtTokenName: string.concat(
+        )),
+        stableDebtTokenName: string(string.concat(
           'Aave ',
           context.networkName,
           ' Stable Debt ',
           basics[i].assetSymbol
-        ),
-        stableDebtTokenSymbol: string.concat(
+        )),
+        stableDebtTokenSymbol: string(string.concat(
           'stableDebt',
           context.networkAbbreviation,
           basics[i].assetSymbol
-        ),
+        )),
         params: bytes('')
       });
     }
