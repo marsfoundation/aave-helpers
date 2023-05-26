@@ -135,7 +135,7 @@ contract AaveV3ConfigEngine is IAaveV3ConfigEngine {
 
     _setPriceFeeds(configs.ids, configs.basics);
 
-    _initAssets(configs.ids, configs.basics, configs.rates);
+    _initAssets(context, configs.ids, configs.basics, configs.rates);
 
     _configureCaps(configs.ids, configs.caps);
 
@@ -208,6 +208,7 @@ contract AaveV3ConfigEngine is IAaveV3ConfigEngine {
 
   /// @dev mandatory configurations for any asset getting listed, including oracle config and basic init
   function _initAssets(
+    PoolContext memory,
     address[] memory ids,
     Basic[] memory basics,
     IV3RateStrategyFactory.RateStrategyParams[] memory rates
