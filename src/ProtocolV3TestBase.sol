@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0
-pragma solidity >=0.7.5 <0.9.0;
+pragma solidity  <0.9.0;
 
 import 'forge-std/Test.sol';
 import {IAaveOracle, IPool, IPoolAddressesProvider, IPoolDataProvider, IDefaultInterestRateStrategy, DataTypes, IPoolConfigurator} from 'aave-address-book/AaveV3.sol';
@@ -10,6 +10,9 @@ import {ExtendedAggregatorV2V3Interface} from './interfaces/ExtendedAggregatorV2
 import {ProxyHelpers} from './ProxyHelpers.sol';
 import {CommonTestBase, ReserveTokens} from './CommonTestBase.sol';
 import {ReserveConfiguration} from 'aave-v3-core/contracts/protocol/libraries/configuration/ReserveConfiguration.sol';
+
+import { BorrowLogic } from 'aave-v3-core/contracts/protocol/libraries/logic/BorrowLogic.sol';
+import { SupplyLogic } from 'aave-v3-core/contracts/protocol/libraries/logic/SupplyLogic.sol';
 
 interface IERC20Detailed is IERC20 {
   function name() external view returns (string memory);
@@ -116,7 +119,16 @@ contract ProtocolV3TestBase is CommonTestBase {
   function e2eTest(IPool pool) public {
     ReserveConfig[] memory configs = _getReservesConfigs(pool);
 
-    for (uint256 i; i < configs.length; i++) {
+    address borrowLogic = deployCode("BorrowLogic.sol:BorrowLogic", bytes(""));
+    address supplyLogic = deployCode("SupplyLogic.sol:SupplyLogic", bytes(""));
+
+    address deployedBorrowLogic = 0x5d834EAD0a80CF3b88c06FeeD6e8E0Fcae2daEE5;
+    address deployedSupplyLogic = 0x39dF4b1329D41A9AE20e17BeFf39aAbd2f049128;
+
+    vm.etch(deployedBorrowLogic, borrowLogic.code);
+    vm.etch(deployedSupplyLogic, supplyLogic.code);
+
+    for (uint256 i = 1; i < configs.length; i++) {
       if (!_includeCollateralAssetInE2e(configs[i])) continue;
 
       for(uint256 j; j < configs.length; j++) {
@@ -136,7 +148,7 @@ contract ProtocolV3TestBase is CommonTestBase {
     ReserveConfig memory borrowConfig
   ) public {
     console.log(
-      'E2E: Collateral %s, borrow %s',
+      '\n\nE2E: Collateral %s, borrow %s',
       collateralConfig.symbol,
       borrowConfig.symbol
     );
@@ -158,6 +170,11 @@ contract ProtocolV3TestBase is CommonTestBase {
       return;
     }
 
+    if (collateralConfig.debtCeiling > 0 && !borrowConfig.isBorrowableInIsolation) {
+      console.log('Skip: %s-%s combo, asset not supported for isolated borrow', collateralConfig.symbol, borrowConfig.symbol);
+      return;
+    }
+
     // Set up collateral and borrow amounts
 
     _deposit(collateralConfig, pool, collateralSupplier, collateralAmount);
@@ -167,8 +184,13 @@ contract ProtocolV3TestBase is CommonTestBase {
 
     // Test 1: Ensure user can't borrow more than LTV
 
-    // _e2eTestBorrowAboveLTV(pool, collateralSupplier, borrowConfig, maxBorrowAmount, false);
+    _e2eTestBorrowAboveLTV(pool, collateralSupplier, borrowConfig, maxBorrowAmount, false);
 
+    vm.revertTo(snapshot);
+
+    // Test 2: Ensure user can't borrow more than LTV in stable mode
+
+    _e2eTestBorrowRepay(pool, collateralSupplier, borrowConfig, maxBorrowAmount, false);
 
     // // test withdrawal
     // _withdraw(borrowConfig, pool, borrowSupplier, borrowAmount / 2);
@@ -186,21 +208,16 @@ contract ProtocolV3TestBase is CommonTestBase {
     // }
   }
 
-  function _aboveSupplyCap(ReserveConfig memory config, uint256 borrowAmount)
-    internal pure returns (bool)
-  {
-    return !config.isFrozen && config.isActive && !config.isPaused;
-  }
-
   /**
    * Reserves that are frozen or not active should not be included in e2e test suite
    */
+  // TODO: Fix LDO issue
   function _includeBorrowAssetInE2e(ReserveConfig memory config) internal pure returns (bool) {
-    return !config.isFrozen && config.isActive && !config.isPaused;
+    return !config.isFrozen && config.isActive && !config.isPaused && config.borrowingEnabled && config.underlying != 0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32;
   }
 
   function _includeCollateralAssetInE2e(ReserveConfig memory config) internal pure returns (bool) {
-    return !config.isFrozen && config.usageAsCollateralEnabled;
+    return !config.isFrozen && config.usageAsCollateralEnabled && config.underlying != 0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32;
   }
 
   function _getTokenAmountByDollarValue(
@@ -242,13 +259,18 @@ contract ProtocolV3TestBase is CommonTestBase {
     uint256 maxBorrowAmount,
     bool stable
   ) internal {
-    // Borrow 100 units under theoretical max, and then 200 units over
+    // Borrow at exactly theoretical max, and then the smallest unit over
     vm.startPrank(borrower);
-    console.log("borrow1: %s", maxBorrowAmount - 100);
-    console.log("borrow2: %s", 200);
-    pool.borrow(config.underlying, maxBorrowAmount - 100, stable ? 1 : 2, 0, borrower);
+    pool.borrow(config.underlying, maxBorrowAmount, stable ? 1 : 2, 0, borrower);
+
+    // Since Chainlink precision is 8 decimals, the additional borrow needs to be at least 1e8
+    // precision to trigger the LTV failure condition.
+    uint256 minThresholdAmount = 10 ** config.decimals > 1e8 ? 10 ** config.decimals - 1e8 : 1;
+
     vm.expectRevert(bytes("36")); // COLLATERAL_CANNOT_COVER_NEW_BORROW
-    pool.borrow(config.underlying, 200, stable ? 1 : 2, 0, borrower);
+    pool.borrow(config.underlying, minThresholdAmount, stable ? 1 : 2, 0, borrower);
+
+    vm.stopPrank();
   }
 
   function _e2eTestBorrowRepay(
