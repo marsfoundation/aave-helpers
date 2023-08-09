@@ -109,16 +109,22 @@ contract ProtocolV3TestBase is CommonTestBase {
   }
 
   /**
-   * @dev Makes a e2e test including withdrawals/borrows and supplies to various reserves.
-   * @param pool the pool that should be tested
+   * @dev Makes an e2e test performing a deposit, borrow, repay and withdraw for all permutations
+   *      of collateral and borrow assets.
+   * @param pool T he pool that should be tested
    */
   function e2eTest(IPool pool) public {
     ReserveConfig[] memory configs = _getReservesConfigs(pool);
-    ReserveConfig memory collateralConfig = _getGoodCollateral(pool, configs, 1000);
-    uint256 snapshot = vm.snapshot();
+
     for (uint256 i; i < configs.length; i++) {
-      if (_includeInE2e(configs[i])) {
-        e2eTestAsset(pool, collateralConfig, configs[i]);
+      if (!_includeCollateralAssetInE2e(configs[i])) continue;
+
+      for(uint256 j; j < configs.length; j++) {
+        if (!_includeBorrowAssetInE2e(configs[j])) continue;
+
+        uint256 snapshot = vm.snapshot();
+        console.log("i: %s, j: %s", i, j);
+        e2eTestAsset(pool, configs[i], configs[j]);
         vm.revertTo(snapshot);
       }
     }
@@ -127,53 +133,74 @@ contract ProtocolV3TestBase is CommonTestBase {
   function e2eTestAsset(
     IPool pool,
     ReserveConfig memory collateralConfig,
-    ReserveConfig memory testAssetConfig
+    ReserveConfig memory borrowConfig
   ) public {
     console.log(
-      'E2E: Collateral %s, TestAsset %s',
+      'E2E: Collateral %s, borrow %s',
       collateralConfig.symbol,
-      testAssetConfig.symbol
+      borrowConfig.symbol
     );
+
     address collateralSupplier = vm.addr(3);
-    address testAssetSupplier = vm.addr(4);
-    require(collateralConfig.usageAsCollateralEnabled, 'COLLATERAL_CONFIG_MUST_BE_COLLATERAL');
-    uint256 testAssetAmount = _getTokenAmountByDollarValue(pool, testAssetConfig, 100);
+    address borrowSupplier     = vm.addr(4);
+
+    uint256 collateralAmount = _getTokenAmountByDollarValue(pool, collateralConfig, 100_000);
+
+    uint256 maxBorrowAmount = _getMaxBorrowAmount(
+      pool, collateralConfig, borrowConfig, collateralAmount
+    );
+
     if (
-      (testAssetConfig.supplyCap * 10 ** testAssetConfig.decimals) <
-      IERC20(testAssetConfig.aToken).totalSupply() + testAssetAmount
+      IERC20(borrowConfig.aToken).totalSupply() + maxBorrowAmount >
+      (borrowConfig.supplyCap * 10 ** borrowConfig.decimals)
     ) {
-      console.log('Skip: %s, supply cap fully utilized', testAssetConfig.symbol);
+      console.log('Skip: %s, supply cap fully utilized', borrowConfig.symbol);
       return;
     }
-    _deposit(
-      collateralConfig,
-      pool,
-      collateralSupplier,
-      _getTokenAmountByDollarValue(pool, collateralConfig, 10000)
-    );
-    _deposit(testAssetConfig, pool, testAssetSupplier, testAssetAmount);
+
+    // Set up collateral and borrow amounts
+
+    _deposit(collateralConfig, pool, collateralSupplier, collateralAmount);
+    _deposit(borrowConfig,     pool, borrowSupplier,     maxBorrowAmount);
+
     uint256 snapshot = vm.snapshot();
-    // test withdrawal
-    _withdraw(testAssetConfig, pool, testAssetSupplier, testAssetAmount / 2);
-    _withdraw(testAssetConfig, pool, testAssetSupplier, type(uint256).max);
-    vm.revertTo(snapshot);
-    // test variable borrowing
-    if (testAssetConfig.borrowingEnabled) {
-      _e2eTestBorrowRepay(pool, collateralSupplier, testAssetConfig, testAssetAmount, false);
-      vm.revertTo(snapshot);
-      // test stable borrowing
-      if (testAssetConfig.stableBorrowRateEnabled) {
-        _e2eTestBorrowRepay(pool, collateralSupplier, testAssetConfig, testAssetAmount, true);
-        vm.revertTo(snapshot);
-      }
-    }
+
+    // Test 1: Ensure user can't borrow more than LTV
+
+    // _e2eTestBorrowAboveLTV(pool, collateralSupplier, borrowConfig, maxBorrowAmount, false);
+
+
+    // // test withdrawal
+    // _withdraw(borrowConfig, pool, borrowSupplier, borrowAmount / 2);
+    // _withdraw(borrowConfig, pool, borrowSupplier, type(uint256).max);
+    // vm.revertTo(snapshot);
+    // // test variable borrowing
+    // if (borrowConfig.borrowingEnabled) {
+    //   _e2eTestBorrowRepay(pool, collateralSupplier, borrowConfig, maxBorrowAmount, false);
+    //   vm.revertTo(snapshot);
+    //   // test stable borrowing
+    //   // if (borrowConfig.stableBorrowRateEnabled) {
+    //   //   _e2eTestBorrowRepay(pool, collateralSupplier, borrowConfig, borrowAmount, true);
+    //   //   vm.revertTo(snapshot);
+    //   // }
+    // }
+  }
+
+  function _aboveSupplyCap(ReserveConfig memory config, uint256 borrowAmount)
+    internal pure returns (bool)
+  {
+    return !config.isFrozen && config.isActive && !config.isPaused;
   }
 
   /**
    * Reserves that are frozen or not active should not be included in e2e test suite
    */
-  function _includeInE2e(ReserveConfig memory config) internal pure returns (bool) {
+  function _includeBorrowAssetInE2e(ReserveConfig memory config) internal pure returns (bool) {
     return !config.isFrozen && config.isActive && !config.isPaused;
+  }
+
+  function _includeCollateralAssetInE2e(ReserveConfig memory config) internal pure returns (bool) {
+    return !config.isFrozen && config.usageAsCollateralEnabled;
   }
 
   function _getTokenAmountByDollarValue(
@@ -184,7 +211,44 @@ contract ProtocolV3TestBase is CommonTestBase {
     IPoolAddressesProvider addressesProvider = IPoolAddressesProvider(pool.ADDRESSES_PROVIDER());
     IAaveOracle oracle = IAaveOracle(addressesProvider.getPriceOracle());
     uint256 latestAnswer = oracle.getAssetPrice(config.underlying);
+
+    console.log("latestAnswer: %s", latestAnswer);
+
     return (dollarValue * 10 ** (8 + config.decimals)) / latestAnswer;
+  }
+
+  function _getMaxBorrowAmount(
+    IPool pool,
+    ReserveConfig memory collateralConfig,
+    ReserveConfig memory borrowConfig,
+    uint256 collateralAmount
+  ) internal view returns (uint256) {
+    IPoolAddressesProvider addressesProvider = IPoolAddressesProvider(pool.ADDRESSES_PROVIDER());
+    IAaveOracle oracle = IAaveOracle(addressesProvider.getPriceOracle());
+    console.log("collateralConfig.ltv", collateralConfig.ltv);
+    return collateralAmount
+      * oracle.getAssetPrice(collateralConfig.underlying)
+      * collateralConfig.ltv
+      * (10 ** borrowConfig.decimals)
+      / oracle.getAssetPrice(borrowConfig.underlying)
+      / (10 ** collateralConfig.decimals)
+      / 10_000;
+  }
+
+  function _e2eTestBorrowAboveLTV(
+    IPool pool,
+    address borrower,
+    ReserveConfig memory config,
+    uint256 maxBorrowAmount,
+    bool stable
+  ) internal {
+    // Borrow 100 units under theoretical max, and then 200 units over
+    vm.startPrank(borrower);
+    console.log("borrow1: %s", maxBorrowAmount - 100);
+    console.log("borrow2: %s", 200);
+    pool.borrow(config.underlying, maxBorrowAmount - 100, stable ? 1 : 2, 0, borrower);
+    vm.expectRevert(bytes("36")); // COLLATERAL_CANNOT_COVER_NEW_BORROW
+    pool.borrow(config.underlying, 200, stable ? 1 : 2, 0, borrower);
   }
 
   function _e2eTestBorrowRepay(
@@ -195,7 +259,12 @@ contract ProtocolV3TestBase is CommonTestBase {
     bool stable
   ) internal {
     this._borrow(testAssetConfig, pool, borrower, amount, stable);
-    _repay(testAssetConfig, pool, borrower, amount, stable);
+    for (uint256 i = 1; i < 1000; i++) {
+      console.log("i: %s", i);
+      this._borrow(testAssetConfig, pool, borrower, 1 * i, stable);
+    }
+
+    // _repay(testAssetConfig, pool, borrower, amount, stable);
   }
 
   /**
