@@ -2,7 +2,7 @@
 pragma solidity >=0.7.5 <0.9.0;
 
 import 'forge-std/Test.sol';
-import {IAaveOracle, IPool, IPoolAddressesProvider, IPoolDataProvider, IDefaultInterestRateStrategy, DataTypes, IPoolConfigurator} from 'aave-address-book/AaveV3.sol';
+import {IAaveOracle, IPool, IPoolAddressesProvider, IPoolDataProvider, IDefaultInterestRateStrategy, DataTypes, IPoolConfigurator, IACLManager} from 'aave-address-book/AaveV3.sol';
 import {IERC20} from 'solidity-utils/contracts/oz-common/interfaces/IERC20.sol';
 import {SafeERC20} from 'solidity-utils/contracts/oz-common/SafeERC20.sol';
 import {IInitializableAdminUpgradeabilityProxy} from './interfaces/IInitializableAdminUpgradeabilityProxy.sol';
@@ -136,6 +136,7 @@ contract ProtocolV3TestBase is CommonTestBase {
     );
     address collateralSupplier = vm.addr(3);
     address testAssetSupplier = vm.addr(4);
+    address liquidator = vm.addr(5);
     require(collateralConfig.usageAsCollateralEnabled, 'COLLATERAL_CONFIG_MUST_BE_COLLATERAL');
     uint256 testAssetAmount = _getTokenAmountByDollarValue(pool, testAssetConfig, 100);
     if (
@@ -166,6 +167,9 @@ contract ProtocolV3TestBase is CommonTestBase {
         _e2eTestBorrowRepay(pool, collateralSupplier, testAssetConfig, testAssetAmount, true);
         vm.revertTo(snapshot);
       }
+      // test liquidation
+      _e2eTestLiquidation(pool, collateralSupplier, liquidator, collateralConfig, testAssetConfig, testAssetAmount);
+      vm.revertTo(snapshot);
     }
   }
 
@@ -196,6 +200,42 @@ contract ProtocolV3TestBase is CommonTestBase {
   ) internal {
     this._borrow(testAssetConfig, pool, borrower, amount, stable);
     _repay(testAssetConfig, pool, borrower, amount, stable);
+  }
+
+  function _e2eTestLiquidation(
+    IPool pool,
+    address user,
+    address liquidator,
+    ReserveConfig memory collateralConfig,
+    ReserveConfig memory testAssetConfig,
+    uint256 amount
+  ) internal {
+    uint256 collateralAmountBefore = IERC20(collateralConfig.aToken).balanceOf(user);
+    this._borrow(testAssetConfig, pool, user, amount, false);
+    assertGt(IERC20(testAssetConfig.variableDebtToken).balanceOf(user), 0, 'DEBT_ZERO');
+    IPoolConfigurator configurator = IPoolConfigurator(
+      IPoolAddressesProvider(pool.ADDRESSES_PROVIDER()).getPoolConfigurator()
+    );
+    // set ltv/lt to 1bps which enables liquidation on the position
+    vm.prank(IPoolAddressesProvider(pool.ADDRESSES_PROVIDER()).getACLAdmin());
+    configurator.configureReserveAsCollateral(
+      collateralConfig.underlying,
+      1,
+      1,
+      10001
+    );
+    _liquidate(collateralConfig, testAssetConfig, pool, liquidator, user, amount, true);
+    // hf should be low enough to have the entire position be liquidated
+    assertEq(IERC20(testAssetConfig.variableDebtToken).balanceOf(user), 0, 'LIQUIDATION_DEBT_NOT_ZERO');
+    uint256 collateralAmountAfter = IERC20(collateralConfig.aToken).balanceOf(user);
+    assertLt(collateralAmountAfter, collateralAmountBefore, 'COLLATERAL_NO_DECREASE');
+    // within 1% error is fine
+    assertApproxEqRel(
+      IERC20(collateralConfig.aToken).balanceOf(liquidator),
+      collateralAmountBefore - collateralAmountAfter,
+      0.01e18,
+      'LIQUIDATOR_NO_RECEIVE_COLLATERAL'
+    );
   }
 
   /**
@@ -299,6 +339,23 @@ contract ProtocolV3TestBase is CommonTestBase {
     pool.repay(config.underlying, amount, stable ? 1 : 2, user);
     uint256 debtAfter = IERC20(debtToken).balanceOf(user);
     require(debtAfter == ((debtBefore > amount) ? debtBefore - amount : 0), '_repay() : ERROR');
+    vm.stopPrank();
+  }
+
+  function _liquidate(
+    ReserveConfig memory collateral,
+    ReserveConfig memory debt,
+    IPool pool,
+    address liquidator,
+    address user,
+    uint256 amount,
+    bool receiveAToken
+  ) internal {
+    vm.startPrank(liquidator);
+    deal(debt.underlying, liquidator, amount);
+    IERC20(debt.underlying).approve(address(pool), amount);
+    console.log('LIQUIDATE: Collateral: %s, Debt: %s, Debt Amount: %s', collateral.symbol, debt.symbol, amount);
+    pool.liquidationCall(collateral.underlying, debt.underlying, user, amount, receiveAToken);
     vm.stopPrank();
   }
 
