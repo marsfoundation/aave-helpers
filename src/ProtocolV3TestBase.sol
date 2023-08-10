@@ -119,16 +119,9 @@ contract ProtocolV3TestBase is CommonTestBase {
    * @param pool T he pool that should be tested
    */
   function e2eTest(IPool pool) public {
+    uint256 snapshot = vm.snapshot();
+
     ReserveConfig[] memory configs = _getReservesConfigs(pool);
-
-    address borrowLogic = deployCode("BorrowLogic.sol:BorrowLogic", bytes(""));
-    address supplyLogic = deployCode("SupplyLogic.sol:SupplyLogic", bytes(""));
-
-    address deployedBorrowLogic = 0x5d834EAD0a80CF3b88c06FeeD6e8E0Fcae2daEE5;
-    address deployedSupplyLogic = 0x39dF4b1329D41A9AE20e17BeFf39aAbd2f049128;
-
-    vm.etch(deployedBorrowLogic, borrowLogic.code);
-    vm.etch(deployedSupplyLogic, supplyLogic.code);
 
     for (uint256 i = 0; i < configs.length; i++) {
       if (!_includeCollateralAssetInE2e(configs[i])) continue;
@@ -136,7 +129,6 @@ contract ProtocolV3TestBase is CommonTestBase {
       for(uint256 j; j < configs.length; j++) {
         if (!_includeBorrowAssetInE2e(configs[j])) continue;
 
-        uint256 snapshot = vm.snapshot();
         e2eTestAsset(pool, configs[i], configs[j]);
         vm.revertTo(snapshot);
       }
@@ -189,19 +181,16 @@ contract ProtocolV3TestBase is CommonTestBase {
     // Test 1: Ensure user can't borrow more than LTV
 
     _e2eTestBorrowAboveLTV(pool, collateralSupplier, borrowConfig, maxBorrowAmount, false);
-
     vm.revertTo(snapshot);
 
     // Test 2: Ensure user can borrow and repay with variable rates
 
     _e2eTestBorrowRepayWithdraw(pool, collateralSupplier, collateralConfig, borrowConfig, maxBorrowAmount, false);
-
     vm.revertTo(snapshot);
 
     // Test 3: Ensure user can borrow and repay with stable rates
 
     _e2eTestBorrowRepayWithdraw(pool, collateralSupplier, collateralConfig, borrowConfig, maxBorrowAmount, true);
-
     vm.revertTo(snapshot);
   }
 
