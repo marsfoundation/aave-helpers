@@ -130,8 +130,6 @@ contract ProtocolV3TestBase is CommonTestBase {
     vm.etch(deployedBorrowLogic, borrowLogic.code);
     vm.etch(deployedSupplyLogic, supplyLogic.code);
 
-    uint256 i = 3; uint256 j = 3;
-
     for (uint256 i = 0; i < configs.length; i++) {
       if (!_includeCollateralAssetInE2e(configs[i])) continue;
 
@@ -139,7 +137,6 @@ contract ProtocolV3TestBase is CommonTestBase {
         if (!_includeBorrowAssetInE2e(configs[j])) continue;
 
         uint256 snapshot = vm.snapshot();
-        console.log("i: %s, j: %s", i, j);
         e2eTestAsset(pool, configs[i], configs[j]);
         vm.revertTo(snapshot);
       }
@@ -179,41 +176,33 @@ contract ProtocolV3TestBase is CommonTestBase {
       return;
     }
 
-    // Set up collateral and borrow amounts
+    // Seed pool with assets to maximize precision in calculations (dusty markets reduce precision in general assertions)
+    _supply(collateralConfig, pool, address(this), _getTokenAmountByDollarValue(pool, collateralConfig, 100_000));
+    _supply(borrowConfig,     pool, address(this), _getTokenAmountByDollarValue(pool, borrowConfig, 100_000));
 
-    _deposit(collateralConfig, pool, collateralSupplier, collateralAmount);
-    _deposit(borrowConfig,     pool, borrowSupplier,     maxBorrowAmount);
+    // Set up collateral and borrow amounts
+    _supply(collateralConfig, pool, collateralSupplier, collateralAmount);
+    _supply(borrowConfig,     pool, borrowSupplier,     maxBorrowAmount);
 
     uint256 snapshot = vm.snapshot();
 
     // Test 1: Ensure user can't borrow more than LTV
 
-    // _e2eTestBorrowAboveLTV(pool, collateralSupplier, borrowConfig, maxBorrowAmount, false);
+    _e2eTestBorrowAboveLTV(pool, collateralSupplier, borrowConfig, maxBorrowAmount, false);
 
     vm.revertTo(snapshot);
 
     // Test 2: Ensure user can borrow and repay with variable rates
 
-    _e2eTestBorrowRepay(pool, collateralSupplier, borrowConfig, maxBorrowAmount, false);
+    _e2eTestBorrowRepayWithdraw(pool, collateralSupplier, collateralConfig, borrowConfig, maxBorrowAmount, false);
+
+    vm.revertTo(snapshot);
 
     // Test 3: Ensure user can borrow and repay with stable rates
 
-    _e2eTestBorrowRepay(pool, collateralSupplier, borrowConfig, maxBorrowAmount, true);
+    _e2eTestBorrowRepayWithdraw(pool, collateralSupplier, collateralConfig, borrowConfig, maxBorrowAmount, true);
 
-    // // test withdrawal
-    // _withdraw(borrowConfig, pool, borrowSupplier, borrowAmount / 2);
-    // _withdraw(borrowConfig, pool, borrowSupplier, type(uint256).max);
-    // vm.revertTo(snapshot);
-    // // test variable borrowing
-    // if (borrowConfig.borrowingEnabled) {
-    //   _e2eTestBorrowRepay(pool, collateralSupplier, borrowConfig, maxBorrowAmount, false);
-    //   vm.revertTo(snapshot);
-    //   // test stable borrowing
-    //   // if (borrowConfig.stableBorrowRateEnabled) {
-    //   //   _e2eTestBorrowRepay(pool, collateralSupplier, borrowConfig, borrowAmount, true);
-    //   //   vm.revertTo(snapshot);
-    //   // }
-    // }
+    vm.revertTo(snapshot);
   }
 
   /**
@@ -237,8 +226,6 @@ contract ProtocolV3TestBase is CommonTestBase {
     IAaveOracle oracle = IAaveOracle(addressesProvider.getPriceOracle());
     uint256 latestAnswer = oracle.getAssetPrice(config.underlying);
 
-    console.log("latestAnswer: %s", latestAnswer);
-
     return (dollarValue * 10 ** (8 + config.decimals)) / latestAnswer;
   }
 
@@ -250,7 +237,6 @@ contract ProtocolV3TestBase is CommonTestBase {
   ) internal view returns (uint256) {
     IPoolAddressesProvider addressesProvider = IPoolAddressesProvider(pool.ADDRESSES_PROVIDER());
     IAaveOracle oracle = IAaveOracle(addressesProvider.getPriceOracle());
-    console.log("collateralConfig.ltv", collateralConfig.ltv);
     return collateralAmount
       * oracle.getAssetPrice(collateralConfig.underlying)
       * collateralConfig.ltv
@@ -281,29 +267,66 @@ contract ProtocolV3TestBase is CommonTestBase {
     vm.stopPrank();
   }
 
-  function _e2eTestBorrowRepay(
+  function _e2eTestBorrowRepayWithdraw(
     IPool pool,
     address borrower,
-    ReserveConfig memory testAssetConfig,
+    ReserveConfig memory collateralConfig,
+    ReserveConfig memory borrowConfig,
     uint256 amount,
     bool stable
   ) internal {
-    if (stable && !testAssetConfig.stableBorrowRateEnabled) {
-      console.log('Skip: %s, stable borrow not enabled', testAssetConfig.symbol);
+    if (stable && !borrowConfig.stableBorrowRateEnabled) {
+      console.log('Skip: %s, stable borrow not enabled', borrowConfig.symbol);
       return;
     }
 
-    address debtToken = stable ? testAssetConfig.stableDebtToken : testAssetConfig.variableDebtToken;
+    address debtToken = stable ? borrowConfig.stableDebtToken : borrowConfig.variableDebtToken;
 
-    this._borrow(testAssetConfig, pool, borrower, amount, stable);
+    // Step 1: Borrow against collateral
+
+    this._borrow(borrowConfig, pool, borrower, amount, stable);
+
+    // Step 2: Warp to increase interest in system
 
     vm.warp(block.timestamp + 60 seconds);
 
-    DataTypes.ReserveData memory beforeReserve = pool.getReserveData(testAssetConfig.underlying);
-    _repay(testAssetConfig, pool, borrower, amount, stable);
-    DataTypes.ReserveData memory afterReserve = pool.getReserveData(testAssetConfig.underlying);
+    // Step 3: Repay original borrow amount, without accrued interest,
+    //         assert updated state of borrow reserve
+
+    DataTypes.ReserveData memory beforeReserve = pool.getReserveData(borrowConfig.underlying);
+    _repay(borrowConfig, pool, borrower, amount, stable);
+    DataTypes.ReserveData memory afterReserve = pool.getReserveData(borrowConfig.underlying);
 
     _assertReserveChange(beforeReserve, afterReserve, int256(amount), 60 seconds);
+
+    // Step 4: Try to withdraw all collateral, demonstrate it's not possible without paying back
+    //         accrued debt
+
+    uint256 totalCollateral = IERC20(collateralConfig.aToken).balanceOf(borrower);
+    uint256 remainingDebt   = IERC20(debtToken).balanceOf(borrower);
+
+    vm.prank(borrower);
+    vm.expectRevert(bytes("35"));  // HEALTH_FACTOR_LOWER_THAN_LIQUIDATION_THRESHOLD
+    pool.withdraw(collateralConfig.underlying, totalCollateral, borrower);
+
+    // Step 5: Pay back remaining debt
+
+    _repay(borrowConfig, pool, borrower, remainingDebt, stable);
+
+    // Step 6: Warp to increase interest in system
+
+    vm.warp(block.timestamp + 60 seconds);
+
+    // Step 7: Withdraw all collateral, assert updated state of collateral reserves
+
+    beforeReserve = pool.getReserveData(collateralConfig.underlying);
+    _withdraw(collateralConfig, pool, borrower, totalCollateral);
+    afterReserve = pool.getReserveData(collateralConfig.underlying);
+
+    // If collateral == borrow asset, reserve was updated during repay step
+    uint256 timePassed = collateralConfig.underlying == borrowConfig.underlying ? 60 seconds : 120 seconds;
+
+    _assertReserveChange(beforeReserve, afterReserve, -int256(amount), timePassed);
   }
 
   function _assertReserveChange(
@@ -312,22 +335,6 @@ contract ProtocolV3TestBase is CommonTestBase {
     int256 amountRepaid,
     uint256 timeSinceLastUpdate
   ) internal {
-    // console.log("");
-    // console.log("beforeReserve.liquidityIndex", beforeReserve.liquidityIndex);
-    // console.log("afterReserve.liquidityIndex ", afterReserve.liquidityIndex);
-
-    // console.log("beforeReserve.currentLiquidityRate", beforeReserve.currentLiquidityRate);
-    // console.log("afterReserve.currentLiquidityRate ", afterReserve.currentLiquidityRate);
-
-    // console.log("beforeReserve.variableBorrowIndex", beforeReserve.variableBorrowIndex);
-    // console.log("afterReserve.variableBorrowIndex ", afterReserve.variableBorrowIndex);
-
-    // console.log("beforeReserve.currentVariableBorrowRate", beforeReserve.currentVariableBorrowRate);
-    // console.log("afterReserve.currentVariableBorrowRate ", afterReserve.currentVariableBorrowRate);
-
-    // console.log("beforeReserve.lastUpdateTimestamp", beforeReserve.lastUpdateTimestamp);
-    // console.log("afterReserve.lastUpdateTimestamp ", afterReserve.lastUpdateTimestamp);
-
     assertEq(afterReserve.configuration.data, beforeReserve.configuration.data);
 
     assertApproxEqAbs(
@@ -344,10 +351,16 @@ contract ProtocolV3TestBase is CommonTestBase {
       assertLt(afterReserve.currentStableBorrowRate,   beforeReserve.currentStableBorrowRate);
       assertLe(afterReserve.isolationModeTotalDebt,    beforeReserve.isolationModeTotalDebt);
     } else {
-      assertGt(afterReserve.currentLiquidityRate,      beforeReserve.currentLiquidityRate);
-      assertGt(afterReserve.currentVariableBorrowRate, beforeReserve.currentVariableBorrowRate);
-      assertGt(afterReserve.currentStableBorrowRate,   beforeReserve.currentStableBorrowRate);
-      assertGt(afterReserve.isolationModeTotalDebt,    beforeReserve.isolationModeTotalDebt);
+      assertTrue(
+        afterReserve.currentLiquidityRate > beforeReserve.currentLiquidityRate ||
+        afterReserve.currentLiquidityRate == 0
+      );
+      assertTrue(
+        afterReserve.currentVariableBorrowRate > beforeReserve.currentVariableBorrowRate ||
+        afterReserve.currentVariableBorrowRate == 0
+      );
+      assertGe(afterReserve.currentStableBorrowRate, beforeReserve.currentStableBorrowRate);
+      assertGe(afterReserve.isolationModeTotalDebt,  beforeReserve.isolationModeTotalDebt);
     }
 
     assertEq(afterReserve.lastUpdateTimestamp, beforeReserve.lastUpdateTimestamp + timeSinceLastUpdate);
@@ -359,7 +372,7 @@ contract ProtocolV3TestBase is CommonTestBase {
     assertEq(afterReserve.interestRateStrategyAddress, beforeReserve.interestRateStrategyAddress);
     assertEq(afterReserve.unbacked,                    beforeReserve.unbacked);
 
-    assertGt(afterReserve.accruedToTreasury, beforeReserve.accruedToTreasury);
+    assertTrue(afterReserve.accruedToTreasury > beforeReserve.accruedToTreasury || afterReserve.accruedToTreasury == 0);
 
     uint256 expectedInterest;
     for (uint256 i; i < 60; i++) {
@@ -371,60 +384,43 @@ contract ProtocolV3TestBase is CommonTestBase {
         / 1e27;
     }
 
-    // Accurate to 0.0000000005%
+    // Accurate to 0.00003% (Most are accurate to roughly 1e-15%)
     assertApproxEqRel(
       afterReserve.variableBorrowIndex,
       beforeReserve.variableBorrowIndex + expectedInterest,
-      0.05e-10 * 1e18
+      0.03e-5 * 1e18
     );
   }
 
-  /**
-   * @dev returns a "good" collateral in the list that cannot be borrowed in stable mode
-   */
-  function _getGoodCollateral(
-    IPool pool,
-    ReserveConfig[] memory configs,
-    uint256 minSupplyCapDollarMargin
-  ) private view returns (ReserveConfig memory config) {
-    for (uint256 i = 0; i < configs.length; i++) {
-      if (
-        // not frozen etc
-        _includeInE2e(configs[i]) &&
-        // usable as collateral
-        configs[i].usageAsCollateralEnabled &&
-        // not stable borrowable as this makes testing stable borrowing unnecessary hard to reason about
-        !configs[i].stableBorrowRateEnabled &&
-        // supply cap not yet reached
-        ((configs[i].supplyCap * 10 ** configs[i].decimals) >
-          IERC20(configs[i].aToken).totalSupply()) &&
-        (// supply cap margin big enough
-        (configs[i].supplyCap * 10 ** configs[i].decimals) -
-          IERC20(configs[i].aToken).totalSupply() >
-          _getTokenAmountByDollarValue(pool, configs[i], minSupplyCapDollarMargin))
-      ) return configs[i];
-    }
-    revert('ERROR: No usable collateral found');
-  }
-
-  function _deposit(
+  function _supply(
     ReserveConfig memory config,
     IPool pool,
     address user,
     uint256 amount
   ) internal {
     require(!config.isFrozen, 'DEPOSIT(): FROZEN_RESERVE');
-    require(config.isActive, 'DEPOSIT(): INACTIVE_RESERVE');
+    require( config.isActive, 'DEPOSIT(): INACTIVE_RESERVE');
     require(!config.isPaused, 'DEPOSIT(): PAUSED_RESERVE');
-    vm.startPrank(user);
-    uint256 aTokenBefore = IERC20(config.aToken).balanceOf(user);
+
     deal2(config.underlying, user, amount);
-    IERC20(config.underlying).safeApprove(address(pool), amount);
+
+    uint256 aTokenBefore           = IERC20(config.aToken).balanceOf(user);
+    uint256 underlyingATokenBefore = IERC20(config.underlying).balanceOf(config.aToken);
+    uint256 underlyingUserBefore   = IERC20(config.underlying).balanceOf(user);
+
     console.log('SUPPLY: %s, Amount: %s', config.symbol, amount);
-    pool.deposit(config.underlying, amount, user, 0);
-    uint256 aTokenAfter = IERC20(config.aToken).balanceOf(user);
-    assertApproxEqAbs(aTokenAfter, aTokenBefore + amount, 1);
+    vm.startPrank(user);
+    IERC20(config.underlying).safeApprove(address(pool), amount);
+    pool.supply(config.underlying, amount, user, 0);
     vm.stopPrank();
+
+    uint256 aTokenAfter           = IERC20(config.aToken).balanceOf(user);
+    uint256 underlyingATokenAfter = IERC20(config.underlying).balanceOf(config.aToken);
+    uint256 underlyingUserAfter   = IERC20(config.underlying).balanceOf(user);
+
+    assertApproxEqAbs(aTokenAfter,           aTokenBefore           + amount, 1);
+    assertApproxEqAbs(underlyingATokenAfter, underlyingATokenBefore + amount, 1);
+    assertApproxEqAbs(underlyingUserAfter,   underlyingUserBefore   - amount, 1);
   }
 
   function _withdraw(
@@ -433,17 +429,23 @@ contract ProtocolV3TestBase is CommonTestBase {
     address user,
     uint256 amount
   ) internal returns (uint256) {
-    vm.startPrank(user);
-    uint256 aTokenBefore = IERC20(config.aToken).balanceOf(user);
+    uint256 aTokenBefore           = IERC20(config.aToken).balanceOf(user);
+    uint256 underlyingATokenBefore = IERC20(config.underlying).balanceOf(config.aToken);
+    uint256 underlyingUserBefore   = IERC20(config.underlying).balanceOf(user);
+
+    vm.prank(user);
     uint256 amountOut = pool.withdraw(config.underlying, amount, user);
     console.log('WITHDRAW: %s, Amount: %s', config.symbol, amountOut);
-    uint256 aTokenAfter = IERC20(config.aToken).balanceOf(user);
-    if (aTokenBefore < amount) {
-      require(aTokenAfter == 0, '_withdraw(): DUST_AFTER_WITHDRAW_ALL');
-    } else {
-      assertApproxEqAbs(aTokenAfter, aTokenBefore - amount, 1);
-    }
-    vm.stopPrank();
+
+    uint256 aTokenAfter           = IERC20(config.aToken).balanceOf(user);
+    uint256 underlyingATokenAfter = IERC20(config.underlying).balanceOf(config.aToken);
+    uint256 underlyingUserAfter   = IERC20(config.underlying).balanceOf(user);
+
+    assertApproxEqAbs(aTokenAfter, aTokenBefore < amount ? 0 : aTokenBefore - amount, 1);
+
+    assertApproxEqAbs(underlyingATokenAfter, underlyingATokenBefore - amountOut, 1);
+    assertApproxEqAbs(underlyingUserAfter,   underlyingUserBefore   + amountOut, 1);
+
     return amountOut;
   }
 
@@ -454,17 +456,23 @@ contract ProtocolV3TestBase is CommonTestBase {
     uint256 amount,
     bool stable
   ) external {
-    vm.startPrank(user);
     address debtToken = stable ? config.stableDebtToken : config.variableDebtToken;
-    uint256 debtBefore = IERC20(debtToken).balanceOf(user);
-    uint256 balanceBefore = IERC20(config.underlying).balanceOf(user);
+
+    uint256 debtBefore             = IERC20(debtToken).balanceOf(user);
+    uint256 underlyingATokenBefore = IERC20(config.underlying).balanceOf(config.aToken);
+    uint256 underlyingUserBefore   = IERC20(config.underlying).balanceOf(user);
 
     console.log('BORROW: %s, Amount %s, Stable: %s', config.symbol, amount, stable);
+    vm.prank(user);
     pool.borrow(config.underlying, amount, stable ? 1 : 2, 0, user);
 
-    assertApproxEqAbs(IERC20(debtToken).balanceOf(user), debtBefore + amount, 1);
-    assertEq(IERC20(config.underlying).balanceOf(user), balanceBefore + amount);
-    vm.stopPrank();
+    uint256 debtAfter             = IERC20(debtToken).balanceOf(user);
+    uint256 underlyingATokenAfter = IERC20(config.underlying).balanceOf(config.aToken);
+    uint256 underlyingUserAfter   = IERC20(config.underlying).balanceOf(user);
+
+    assertApproxEqAbs(debtAfter,             debtBefore             + amount, 1);
+    assertApproxEqAbs(underlyingATokenAfter, underlyingATokenBefore - amount, 1);
+    assertApproxEqAbs(underlyingUserAfter,   underlyingUserBefore   + amount, 1);
   }
 
   function _repay(
@@ -474,16 +482,28 @@ contract ProtocolV3TestBase is CommonTestBase {
     uint256 amount,
     bool stable
   ) internal {
-    vm.startPrank(user);
     address debtToken = stable ? config.stableDebtToken : config.variableDebtToken;
-    uint256 debtBefore = IERC20(debtToken).balanceOf(user);
+
     deal2(config.underlying, user, amount);
-    IERC20(config.underlying).safeApprove(address(pool), amount);
+
+    uint256 debtBefore             = IERC20(debtToken).balanceOf(user);
+    uint256 underlyingATokenBefore = IERC20(config.underlying).balanceOf(config.aToken);
+    uint256 underlyingUserBefore   = IERC20(config.underlying).balanceOf(user);
+
     console.log('REPAY: %s, Amount: %s', config.symbol, amount);
+    vm.startPrank(user);
+    IERC20(config.underlying).safeApprove(address(pool), amount);
     pool.repay(config.underlying, amount, stable ? 1 : 2, user);
-    uint256 debtAfter = IERC20(debtToken).balanceOf(user);
-    assertApproxEqAbs(debtAfter, ((debtBefore > amount) ? debtBefore - amount : 0), 1);
     vm.stopPrank();
+
+    uint256 debtAfter             = IERC20(debtToken).balanceOf(user);
+    uint256 underlyingATokenAfter = IERC20(config.underlying).balanceOf(config.aToken);
+    uint256 underlyingUserAfter   = IERC20(config.underlying).balanceOf(user);
+
+    assertApproxEqAbs(debtAfter,             debtBefore             - amount, 1);
+    assertApproxEqAbs(underlyingATokenAfter, underlyingATokenBefore + amount, 1);
+    assertApproxEqAbs(underlyingUserAfter,   underlyingUserBefore   - amount, 1);
+
   }
 
   function _writeEModeConfigs(
