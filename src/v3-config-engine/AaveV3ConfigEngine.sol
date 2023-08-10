@@ -208,7 +208,7 @@ contract AaveV3ConfigEngine is IAaveV3ConfigEngine {
 
   /// @dev mandatory configurations for any asset getting listed, including oracle config and basic init
   function _initAssets(
-    PoolContext memory,
+    PoolContext memory context,
     address[] memory ids,
     Basic[] memory basics,
     IV3RateStrategyFactory.RateStrategyParams[] memory rates
@@ -230,24 +230,30 @@ contract AaveV3ConfigEngine is IAaveV3ConfigEngine {
         underlyingAsset: ids[i],
         treasury: COLLECTOR,
         incentivesController: REWARDS_CONTROLLER,
-        aTokenName: string(string.concat('Spark ', bytes(basics[i].assetSymbol))),
-        aTokenSymbol: string(string.concat('sp', bytes(basics[i].assetSymbol))),
-        variableDebtTokenName: string(string.concat(
-          'Spark Variable Debt ',
-          bytes(basics[i].assetSymbol)
-        )),
-        variableDebtTokenSymbol: string(string.concat(
+        aTokenName: string.concat('Spark ', context.networkName, ' ', basics[i].assetSymbol),
+        aTokenSymbol: string.concat('sp', context.networkAbbreviation, basics[i].assetSymbol),
+        variableDebtTokenName: string.concat(
+          'Spark ',
+          context.networkName,
+          ' Variable Debt ',
+          basics[i].assetSymbol
+        ),
+        variableDebtTokenSymbol: string.concat(
           'variableDebt',
-          bytes(basics[i].assetSymbol)
-        )),
-        stableDebtTokenName: string(string.concat(
-          'Spark Stable Debt ',
-          bytes(basics[i].assetSymbol)
-        )),
-        stableDebtTokenSymbol: string(string.concat(
+          context.networkAbbreviation,
+          basics[i].assetSymbol
+        ),
+        stableDebtTokenName: string.concat(
+          'Spark ',
+          context.networkName,
+          ' Stable Debt ',
+          basics[i].assetSymbol
+        ),
+        stableDebtTokenSymbol: string.concat(
           'stableDebt',
-          bytes(basics[i].assetSymbol)
-        )),
+          context.networkAbbreviation,
+          basics[i].assetSymbol
+        ),
         params: bytes('')
       });
     }
