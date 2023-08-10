@@ -230,23 +230,23 @@ contract AaveV3ConfigEngine is IAaveV3ConfigEngine {
         underlyingAsset: ids[i],
         treasury: COLLECTOR,
         incentivesController: REWARDS_CONTROLLER,
-        aTokenName: string(string.concat('Spark ', bytes(basics[i].assetSymbol))),
-        aTokenSymbol: string(string.concat('sp', bytes(basics[i].assetSymbol))),
-        variableDebtTokenName: string(string.concat(
+        aTokenName: string(abi.encodePacked('Spark ',basics[i].assetSymbol)),
+        aTokenSymbol: string(abi.encodePacked('sp', basics[i].assetSymbol)),
+        variableDebtTokenName: string(abi.encodePacked(
           'Spark Variable Debt ',
-          bytes(basics[i].assetSymbol)
+          basics[i].assetSymbol
         )),
-        variableDebtTokenSymbol: string(string.concat(
+        variableDebtTokenSymbol: string(abi.encodePacked(
           'variableDebt',
-          bytes(basics[i].assetSymbol)
+          basics[i].assetSymbol
         )),
-        stableDebtTokenName: string(string.concat(
+        stableDebtTokenName: string(abi.encodePacked(
           'Spark Stable Debt ',
-          bytes(basics[i].assetSymbol)
+          basics[i].assetSymbol
         )),
-        stableDebtTokenSymbol: string(string.concat(
+        stableDebtTokenSymbol: string(abi.encodePacked(
           'stableDebt',
-          bytes(basics[i].assetSymbol)
+          basics[i].assetSymbol
         )),
         params: bytes('')
       });
