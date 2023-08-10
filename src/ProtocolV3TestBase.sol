@@ -214,8 +214,11 @@ contract ProtocolV3TestBase is CommonTestBase {
         configs[i].usageAsCollateralEnabled &&
         // not stable borrowable as this makes testing stable borrowing unnecessary hard to reason about
         !configs[i].stableBorrowRateEnabled &&
+<<<<<<< HEAD
         // LTV is higher than 15%
         configs[i].ltv > 1500 &&
+=======
+>>>>>>> spark
         // supply cap not yet reached
         ((configs[i].supplyCap * 10 ** configs[i].decimals) >
           IERC20(configs[i].aToken).totalSupply()) &&
@@ -343,53 +346,57 @@ contract ProtocolV3TestBase is CommonTestBase {
     for (uint256 i = 0; i < configs.length; i++) {
       if (!_isInAddressArray(usedStrategies, configs[i].interestRateStrategy)) {
         usedStrategies[i] = configs[i].interestRateStrategy;
-        IDefaultInterestRateStrategy strategy = IDefaultInterestRateStrategy(
-          configs[i].interestRateStrategy
-        );
-        string memory key = vm.toString(address(strategy));
-        vm.serializeString(
-          key,
-          'baseStableBorrowRate',
-          vm.toString(strategy.getBaseStableBorrowRate())
-        );
-        vm.serializeString(key, 'stableRateSlope1', vm.toString(strategy.getStableRateSlope1()));
-        vm.serializeString(key, 'stableRateSlope2', vm.toString(strategy.getStableRateSlope2()));
-        vm.serializeString(
-          key,
-          'baseVariableBorrowRate',
-          vm.toString(strategy.getBaseVariableBorrowRate())
-        );
-        vm.serializeString(
-          key,
-          'variableRateSlope1',
-          vm.toString(strategy.getVariableRateSlope1())
-        );
-        vm.serializeString(
-          key,
-          'variableRateSlope2',
-          vm.toString(strategy.getVariableRateSlope2())
-        );
-        vm.serializeString(
-          key,
-          'optimalStableToTotalDebtRatio',
-          vm.toString(strategy.OPTIMAL_STABLE_TO_TOTAL_DEBT_RATIO())
-        );
-        vm.serializeString(
-          key,
-          'maxExcessStableToTotalDebtRatio',
-          vm.toString(strategy.MAX_EXCESS_STABLE_TO_TOTAL_DEBT_RATIO())
-        );
-        vm.serializeString(key, 'optimalUsageRatio', vm.toString(strategy.OPTIMAL_USAGE_RATIO()));
-        string memory object = vm.serializeString(
-          key,
-          'maxExcessUsageRatio',
-          vm.toString(strategy.MAX_EXCESS_USAGE_RATIO())
-        );
-        content = vm.serializeString(strategiesKey, key, object);
+        content = _writeStrategyConfig(strategiesKey, configs[i].interestRateStrategy);
       }
     }
     string memory output = vm.serializeString('root', 'strategies', content);
     vm.writeJson(output, path);
+  }
+
+  function _writeStrategyConfig(string memory strategiesKey, address _strategy) internal virtual returns (string memory content) {
+    string memory key = vm.toString(_strategy);
+    IDefaultInterestRateStrategy strategy = IDefaultInterestRateStrategy(
+      _strategy
+    );
+    vm.serializeString(
+      key,
+      'baseStableBorrowRate',
+      vm.toString(strategy.getBaseStableBorrowRate())
+    );
+    vm.serializeString(key, 'stableRateSlope1', vm.toString(strategy.getStableRateSlope1()));
+    vm.serializeString(key, 'stableRateSlope2', vm.toString(strategy.getStableRateSlope2()));
+    vm.serializeString(
+      key,
+      'baseVariableBorrowRate',
+      vm.toString(strategy.getBaseVariableBorrowRate())
+    );
+    vm.serializeString(
+      key,
+      'variableRateSlope1',
+      vm.toString(strategy.getVariableRateSlope1())
+    );
+    vm.serializeString(
+      key,
+      'variableRateSlope2',
+      vm.toString(strategy.getVariableRateSlope2())
+    );
+    vm.serializeString(
+      key,
+      'optimalStableToTotalDebtRatio',
+      vm.toString(strategy.OPTIMAL_STABLE_TO_TOTAL_DEBT_RATIO())
+    );
+    vm.serializeString(
+      key,
+      'maxExcessStableToTotalDebtRatio',
+      vm.toString(strategy.MAX_EXCESS_STABLE_TO_TOTAL_DEBT_RATIO())
+    );
+    vm.serializeString(key, 'optimalUsageRatio', vm.toString(strategy.OPTIMAL_USAGE_RATIO()));
+    string memory object = vm.serializeString(
+      key,
+      'maxExcessUsageRatio',
+      vm.toString(strategy.MAX_EXCESS_USAGE_RATIO())
+    );
+    content = vm.serializeString(strategiesKey, key, object);
   }
 
   function _writeReserveConfigs(

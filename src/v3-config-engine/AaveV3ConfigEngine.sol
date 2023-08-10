@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.12;
+pragma solidity ^0.8.10;
 
 import {ConfiguratorInputTypes, DataTypes} from 'aave-address-book/AaveV3.sol';
 import {ReserveConfiguration} from 'aave-v3-core/contracts/protocol/libraries/configuration/ReserveConfiguration.sol';
@@ -208,7 +208,7 @@ contract AaveV3ConfigEngine is IAaveV3ConfigEngine {
 
   /// @dev mandatory configurations for any asset getting listed, including oracle config and basic init
   function _initAssets(
-    PoolContext memory context,
+    PoolContext memory,
     address[] memory ids,
     Basic[] memory basics,
     IV3RateStrategyFactory.RateStrategyParams[] memory rates
@@ -230,30 +230,24 @@ contract AaveV3ConfigEngine is IAaveV3ConfigEngine {
         underlyingAsset: ids[i],
         treasury: COLLECTOR,
         incentivesController: REWARDS_CONTROLLER,
-        aTokenName: string.concat('Aave ', context.networkName, ' ', basics[i].assetSymbol),
-        aTokenSymbol: string.concat('a', context.networkAbbreviation, basics[i].assetSymbol),
-        variableDebtTokenName: string.concat(
-          'Aave ',
-          context.networkName,
-          ' Variable Debt ',
+        aTokenName: string(abi.encodePacked('Spark ',basics[i].assetSymbol)),
+        aTokenSymbol: string(abi.encodePacked('sp', basics[i].assetSymbol)),
+        variableDebtTokenName: string(abi.encodePacked(
+          'Spark Variable Debt ',
           basics[i].assetSymbol
-        ),
-        variableDebtTokenSymbol: string.concat(
+        )),
+        variableDebtTokenSymbol: string(abi.encodePacked(
           'variableDebt',
-          context.networkAbbreviation,
           basics[i].assetSymbol
-        ),
-        stableDebtTokenName: string.concat(
-          'Aave ',
-          context.networkName,
-          ' Stable Debt ',
+        )),
+        stableDebtTokenName: string(abi.encodePacked(
+          'Spark Stable Debt ',
           basics[i].assetSymbol
-        ),
-        stableDebtTokenSymbol: string.concat(
+        )),
+        stableDebtTokenSymbol: string(abi.encodePacked(
           'stableDebt',
-          context.networkAbbreviation,
           basics[i].assetSymbol
-        ),
+        )),
         params: bytes('')
       });
     }
