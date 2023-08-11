@@ -171,6 +171,18 @@ contract ProtocolV3TestBase is CommonTestBase {
       _e2eTestLiquidation(pool, collateralSupplier, liquidator, collateralConfig, testAssetConfig, testAssetAmount);
       vm.revertTo(snapshot);
     }
+    // test flashloans
+    if (testAssetConfig.isFlashloanable) {
+      _e2eTestFlashLoan(pool, testAssetConfig, testAssetAmount);
+      vm.revertTo(snapshot);
+    }
+    // test mintToTreasury execution
+    {
+      address[] memory assets = new address[](1);
+      assets[0] = testAssetConfig.underlying;
+      pool.mintToTreasury(assets);
+      vm.revertTo(snapshot);
+    }
   }
 
   /**
@@ -236,6 +248,36 @@ contract ProtocolV3TestBase is CommonTestBase {
       0.01e18,
       'LIQUIDATOR_NO_RECEIVE_COLLATERAL'
     );
+  }
+
+  function _e2eTestFlashLoan(
+    IPool pool,
+    ReserveConfig memory testAssetConfig,
+    uint256 amount
+  ) internal {
+    assertEq(IERC20(testAssetConfig.underlying).balanceOf(address(this)), 0, 'UNDERLYING_NOT_ZERO');
+    pool.flashLoanSimple(
+      address(this),
+      testAssetConfig.underlying,
+      amount,
+      abi.encode(address(pool)),
+      0
+    );
+    assertEq(IERC20(testAssetConfig.underlying).balanceOf(address(this)), 0, 'UNDERLYING_NOT_ZERO');
+  }
+
+  function executeOperation(
+    address asset,
+    uint256 amount,
+    uint256 premium,
+    address,
+    bytes calldata params
+  ) external returns (bool) {
+    address pool = abi.decode(params, (address));
+    assertEq(IERC20(asset).balanceOf(address(this)), amount, 'UNDERLYING_NOT_AMOUNT');
+    deal(asset, address(this), amount + premium);
+    IERC20(asset).approve(pool, amount + premium);
+    return true;
   }
 
   /**
