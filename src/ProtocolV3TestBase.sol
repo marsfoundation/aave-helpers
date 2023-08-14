@@ -77,6 +77,7 @@ contract ProtocolV3TestBase is CommonTestBase {
   using SafeERC20 for IERC20;
 
   address constant DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
+  address constant LDO = 0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32;  // TODO: Remove condition
 
   /**
    * @dev Generates a markdown compatible snapshot of the whole pool configuration into `/reports`.
@@ -210,11 +211,11 @@ contract ProtocolV3TestBase is CommonTestBase {
    */
   // TODO: Fix LDO issue
   function _includeBorrowAssetInE2e(ReserveConfig memory config) internal pure returns (bool) {
-    return !config.isFrozen && config.isActive && !config.isPaused && config.borrowingEnabled && config.underlying != 0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32;
+    return !config.isFrozen && config.isActive && !config.isPaused && config.borrowingEnabled && config.underlying != LDO;
   }
 
   function _includeCollateralAssetInE2e(ReserveConfig memory config) internal pure returns (bool) {
-    return !config.isFrozen && config.usageAsCollateralEnabled && config.underlying != 0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32;
+    return !config.isFrozen && config.usageAsCollateralEnabled && config.underlying != LDO;
   }
 
   function _getTokenAmountByDollarValue(
