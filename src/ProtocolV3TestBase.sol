@@ -610,7 +610,7 @@ contract ProtocolV3TestBase is CommonTestBase {
 
     vm.startPrank(liquidator);
     IERC20(debt.underlying).approve(address(pool), amount);
-    console.log('LIQUIDATE: Collateral: %s, Debt: %s, Debt Amount: %s', collateral.symbol, debt.symbol, amount);
+    console.log('LIQUIDATE: Collateral: %s, Debt: %s, Debt Amount: %s', collateral.symbol, debt.symbol, _formattedAmount(amount, debt.decimals));
     pool.liquidationCall(collateral.underlying, debt.underlying, user, amount, receiveAToken);
     vm.stopPrank();
   }
