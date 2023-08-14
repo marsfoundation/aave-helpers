@@ -21,6 +21,8 @@ contract CommonTestBase is Test {
 
   address public constant EOA = 0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045;
 
+  address public constant LDO_MAINNET = 0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32;
+
   /**
    * @notice deal doesn't support amounts stored in a script right now.
    * This function patches deal to mock and transfer funds instead.
@@ -34,6 +36,12 @@ contract CommonTestBase is Test {
       // GUSD
       if (asset == AaveV2EthereumAssets.GUSD_UNDERLYING) {
         vm.startPrank(0x22FFDA6813f4F34C520bf36E5Ea01167bC9DF159);
+        IERC20(asset).transfer(user, amount);
+        return true;
+      }
+      // LDO
+      if (asset == LDO_MAINNET) {
+        vm.startPrank(0x3e40D73EB977Dc6a537aF587D48316feE66E9C8c);
         IERC20(asset).transfer(user, amount);
         return true;
       }

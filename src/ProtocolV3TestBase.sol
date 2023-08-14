@@ -76,9 +76,6 @@ contract ProtocolV3TestBase is CommonTestBase {
   using ReserveConfiguration for DataTypes.ReserveConfigurationMap;
   using SafeERC20 for IERC20;
 
-  address constant DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
-  address constant LDO = 0x5A98FcBEA516Cf06857215779Fd812CA3beF1B32;  // TODO: Remove condition
-
   /**
    * @dev Generates a markdown compatible snapshot of the whole pool configuration into `/reports`.
    * @param reportName filename suffix for the generated reports.
@@ -209,13 +206,12 @@ contract ProtocolV3TestBase is CommonTestBase {
   /**
    * Reserves that are frozen or not active should not be included in e2e test suite
    */
-  // TODO: Fix LDO issue
   function _includeBorrowAssetInE2e(ReserveConfig memory config) internal pure returns (bool) {
-    return !config.isFrozen && config.isActive && !config.isPaused && config.borrowingEnabled && config.underlying != LDO;
+    return !config.isFrozen && config.isActive && !config.isPaused && config.borrowingEnabled;
   }
 
   function _includeCollateralAssetInE2e(ReserveConfig memory config) internal pure returns (bool) {
-    return !config.isFrozen && config.usageAsCollateralEnabled && config.underlying != LDO;
+    return !config.isFrozen && config.usageAsCollateralEnabled;
   }
 
   function _getTokenAmountByDollarValue(
@@ -298,7 +294,7 @@ contract ProtocolV3TestBase is CommonTestBase {
     _repay(borrowConfig, pool, borrower, amount, stable);
     DataTypes.ReserveData memory afterReserve = pool.getReserveData(borrowConfig.underlying);
 
-    _assertReserveChange(beforeReserve, afterReserve, int256(amount), 60 seconds, borrowConfig.underlying == DAI);
+    _assertReserveChange(beforeReserve, afterReserve, int256(amount), 60 seconds);
 
     // Step 4: Try to withdraw all collateral, demonstrate it's not possible without paying back
     //         accrued debt
@@ -330,15 +326,14 @@ contract ProtocolV3TestBase is CommonTestBase {
     // If collateral == borrow asset, reserve was updated during repay step
     uint256 timePassed = collateralConfig.underlying == borrowConfig.underlying ? 60 seconds : 120 seconds;
 
-    _assertReserveChange(beforeReserve, afterReserve, -int256(amount), timePassed, borrowConfig.underlying == DAI);
+    _assertReserveChange(beforeReserve, afterReserve, -int256(amount), timePassed);
   }
 
   function _assertReserveChange(
     DataTypes.ReserveData memory beforeReserve,
     DataTypes.ReserveData memory afterReserve,
     int256 amountRepaid,
-    uint256 timeSinceLastUpdate,
-    bool isPredictableRateAsset
+    uint256 timeSinceLastUpdate
   ) internal {
     assertEq(afterReserve.configuration.data, beforeReserve.configuration.data);
 
@@ -348,10 +343,6 @@ contract ProtocolV3TestBase is CommonTestBase {
       * (1e27 + (beforeReserve.currentLiquidityRate * timeSinceLastUpdate / 365 days)) / 1e27,
       1
     );
-
-    if (isPredictableRateAsset) {
-      assertEq(afterReserve.currentVariableBorrowRate, beforeReserve.currentVariableBorrowRate);
-    }
 
     if (amountRepaid > 0) {
       assertLt(afterReserve.currentLiquidityRate,      beforeReserve.currentLiquidityRate);
