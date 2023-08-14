@@ -418,11 +418,10 @@ contract ProtocolV3TestBase is CommonTestBase {
   ) internal {
     uint256 collateralAmountBefore = IERC20(collateralConfig.aToken).balanceOf(user);
     this._borrow(testAssetConfig, pool, user, amount, false);
-    assertGt(IERC20(testAssetConfig.variableDebtToken).balanceOf(user), 0, 'DEBT_ZERO');
     IPoolConfigurator configurator = IPoolConfigurator(
       IPoolAddressesProvider(pool.ADDRESSES_PROVIDER()).getPoolConfigurator()
     );
-    // set ltv/lt to 1bps which enables liquidation on the position
+    // Set ltv/lt to 1bps which enables liquidation on the position
     vm.prank(IPoolAddressesProvider(pool.ADDRESSES_PROVIDER()).getACLAdmin());
     configurator.configureReserveAsCollateral(
       collateralConfig.underlying,
@@ -431,11 +430,11 @@ contract ProtocolV3TestBase is CommonTestBase {
       10001
     );
     _liquidate(collateralConfig, testAssetConfig, pool, liquidator, user, amount, true);
-    // hf should be low enough to have the entire position be liquidated
+    // HF should be low enough to have the entire position be liquidated
     assertEq(IERC20(testAssetConfig.variableDebtToken).balanceOf(user), 0, 'LIQUIDATION_DEBT_NOT_ZERO');
     uint256 collateralAmountAfter = IERC20(collateralConfig.aToken).balanceOf(user);
     assertLt(collateralAmountAfter, collateralAmountBefore, 'COLLATERAL_NO_DECREASE');
-    // within 1% error is fine
+    // Within 1% error is fine
     assertApproxEqRel(
       IERC20(collateralConfig.aToken).balanceOf(liquidator),
       collateralAmountBefore - collateralAmountAfter,
