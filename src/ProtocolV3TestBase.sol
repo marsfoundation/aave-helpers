@@ -156,19 +156,22 @@ contract ProtocolV3TestBase is CommonTestBase {
       pool, collateralConfig, borrowConfig, collateralAmount
     );
 
-    if (
-      IERC20(borrowConfig.aToken).totalSupply() + maxBorrowAmount + borrowSeedAmount >
-      (borrowConfig.supplyCap * 10 ** borrowConfig.decimals)
-    ) {
-      console.log('Skip borrow: %s, supply cap fully utilized', borrowConfig.symbol);
+    uint256 totalBorrowAssetSupplied = borrowConfig.underlying == collateralConfig.underlying
+      ? collateralAmount * 2 + borrowSeedAmount + maxBorrowAmount
+      : borrowSeedAmount + maxBorrowAmount;
+
+      uint256 totalCollateralAssetSupplied = borrowConfig.underlying == collateralConfig.underlying
+      ? collateralAmount * 2 + borrowSeedAmount + maxBorrowAmount
+      : collateralAmount * 2;
+
+    if (_isAboveSupplyCap(collateralConfig, totalCollateralAssetSupplied)) {
+      console.log('Skip collateral: %s, supply cap fully utilized', collateralConfig.symbol);
       return;
     }
-
     if (
-      IERC20(collateralConfig.aToken).totalSupply() + collateralAmount * 2 >
-      (collateralConfig.supplyCap * 10 ** collateralConfig.decimals)
+      _isAboveSupplyCap(borrowConfig, totalBorrowAssetSupplied)
     ) {
-      console.log('Skip collateral: %s, supply cap fully utilized', borrowConfig.symbol);
+      console.log('Skip borrow: %s, supply cap fully utilized', borrowConfig.symbol);
       return;
     }
 
@@ -383,6 +386,10 @@ contract ProtocolV3TestBase is CommonTestBase {
       beforeReserve.variableBorrowIndex + expectedInterest,
       0.01e-12 * 1e18
     );
+  }
+
+  function _isAboveSupplyCap(ReserveConfig memory config, uint256 supplyAmount) internal view returns (bool) {
+    return IERC20(config.aToken).totalSupply() + supplyAmount > (config.supplyCap * 10 ** config.decimals);
   }
 
   function _supply(
