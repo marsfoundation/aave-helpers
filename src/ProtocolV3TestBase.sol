@@ -214,7 +214,7 @@ contract ProtocolV3TestBase is CommonTestBase {
   }
 
   function _includeCollateralAssetInE2e(ReserveConfig memory config) internal pure returns (bool) {
-    return !config.isFrozen && config.usageAsCollateralEnabled;
+    return !config.isFrozen && config.isActive && !config.isPaused && config.usageAsCollateralEnabled;
   }
 
   function _getTokenAmountByDollarValue(
@@ -243,7 +243,7 @@ contract ProtocolV3TestBase is CommonTestBase {
       * (10 ** borrowConfig.decimals)
       / oracle.getAssetPrice(borrowConfig.underlying)
       / (10 ** collateralConfig.decimals)
-      / 10_000;
+      / 100_00;
   }
 
   function _e2eTestBorrowAboveLTV(
@@ -305,8 +305,8 @@ contract ProtocolV3TestBase is CommonTestBase {
     uint256 totalCollateral = IERC20(collateralConfig.aToken).balanceOf(borrower);
     uint256 remainingDebt   = IERC20(debtToken).balanceOf(borrower);
 
-    // Handle edge case for DAI LTV at 0.01% causing rounding errors here, preventing failure.
-    if (collateralConfig.ltv > 1) {
+    // Handle edge case for for low LTV collaterals at under 1% causing rounding errors here, preventing failure.
+    if (collateralConfig.ltv > 100) {
       vm.prank(borrower);
       vm.expectRevert(bytes("35"));  // HEALTH_FACTOR_LOWER_THAN_LIQUIDATION_THRESHOLD
       pool.withdraw(collateralConfig.underlying, totalCollateral, borrower);
@@ -398,9 +398,9 @@ contract ProtocolV3TestBase is CommonTestBase {
     address user,
     uint256 amount
   ) internal {
-    require(!config.isFrozen, 'DEPOSIT(): FROZEN_RESERVE');
-    require( config.isActive, 'DEPOSIT(): INACTIVE_RESERVE');
-    require(!config.isPaused, 'DEPOSIT(): PAUSED_RESERVE');
+    require(!config.isFrozen, 'SUPPLY(): FROZEN_RESERVE');
+    require( config.isActive, 'SUPPLY(): INACTIVE_RESERVE');
+    require(!config.isPaused, 'SUPPLY(): PAUSED_RESERVE');
 
     deal2(config.underlying, user, amount);
 
