@@ -148,6 +148,7 @@ contract ProtocolV3TestBase is CommonTestBase {
 
     address collateralSupplier = vm.addr(3);
     address borrowSupplier     = vm.addr(4);
+    address liquidator         = vm.addr(5);
 
     uint256 collateralAmount = _getTokenAmountByDollarValue(pool, collateralConfig, 100_000);
     uint256 borrowSeedAmount = _getTokenAmountByDollarValue(pool, borrowConfig,     100_000);
@@ -203,6 +204,21 @@ contract ProtocolV3TestBase is CommonTestBase {
     // Test 3: Ensure user can borrow and repay with stable rates
 
     _e2eTestBorrowRepayWithdraw(pool, collateralSupplier, collateralConfig, borrowConfig, maxBorrowAmount, true);
+    vm.revertTo(snapshot);
+
+    // Test 4: Test liquidation
+
+    _e2eTestLiquidation(pool, collateralSupplier, liquidator, collateralConfig, borrowConfig, maxBorrowAmount);
+    vm.revertTo(snapshot);
+
+    // Test 5: Test flashloan
+
+    _e2eTestFlashLoan(pool, borrowConfig, maxBorrowAmount);
+    vm.revertTo(snapshot);
+
+    // Test 6: Test mintToTreasury
+
+    _e2eTestMintToTreasury(pool, borrowConfig);
     vm.revertTo(snapshot);
   }
 
@@ -392,6 +408,81 @@ contract ProtocolV3TestBase is CommonTestBase {
     return IERC20(config.aToken).totalSupply() + supplyAmount > (config.supplyCap * 10 ** config.decimals);
   }
 
+  function _e2eTestLiquidation(
+    IPool pool,
+    address user,
+    address liquidator,
+    ReserveConfig memory collateralConfig,
+    ReserveConfig memory testAssetConfig,
+    uint256 amount
+  ) internal {
+    uint256 collateralAmountBefore = IERC20(collateralConfig.aToken).balanceOf(user);
+    this._borrow(testAssetConfig, pool, user, amount, false);
+    IPoolConfigurator configurator = IPoolConfigurator(
+      IPoolAddressesProvider(pool.ADDRESSES_PROVIDER()).getPoolConfigurator()
+    );
+    // Set ltv/lt to 1bps which enables liquidation on the position
+    vm.prank(IPoolAddressesProvider(pool.ADDRESSES_PROVIDER()).getACLAdmin());
+    configurator.configureReserveAsCollateral(
+      collateralConfig.underlying,
+      1,
+      1,
+      10001
+    );
+    _liquidate(collateralConfig, testAssetConfig, pool, liquidator, user, amount, true);
+    // HF should be low enough to have the entire position be liquidated
+    assertEq(IERC20(testAssetConfig.variableDebtToken).balanceOf(user), 0, 'LIQUIDATION_DEBT_NOT_ZERO');
+    uint256 collateralAmountAfter = IERC20(collateralConfig.aToken).balanceOf(user);
+    assertLt(collateralAmountAfter, collateralAmountBefore, 'COLLATERAL_NO_DECREASE');
+    // Within 0.01% error is fine
+    assertApproxEqRel(
+      IERC20(collateralConfig.aToken).balanceOf(liquidator),
+      collateralAmountBefore - collateralAmountAfter,
+      0.0001e18,
+      'LIQUIDATOR_NO_RECEIVE_COLLATERAL'
+    );
+  }
+
+  function _e2eTestFlashLoan(
+    IPool pool,
+    ReserveConfig memory testAssetConfig,
+    uint256 amount
+  ) internal {
+    assertEq(IERC20(testAssetConfig.underlying).balanceOf(address(this)), 0, 'UNDERLYING_NOT_ZERO');
+    pool.flashLoanSimple(
+      address(this),
+      testAssetConfig.underlying,
+      amount,
+      abi.encode(address(pool)),
+      0
+    );
+    assertEq(IERC20(testAssetConfig.underlying).balanceOf(address(this)), 0, 'UNDERLYING_NOT_ZERO');
+  }
+
+  // Called back from the flashloan
+  function executeOperation(
+    address asset,
+    uint256 amount,
+    uint256 premium,
+    address,
+    bytes calldata params
+  ) external returns (bool) {
+    address pool = abi.decode(params, (address));
+    assertEq(IERC20(asset).balanceOf(address(this)), amount, 'UNDERLYING_NOT_AMOUNT');
+    deal(asset, address(this), amount + premium);
+    IERC20(asset).approve(pool, amount + premium);
+    return true;
+  }
+
+  function _e2eTestMintToTreasury(
+    IPool pool,
+    ReserveConfig memory testAssetConfig
+  ) internal {
+    address[] memory assets = new address[](1);
+    assets[0] = testAssetConfig.underlying;
+    pool.mintToTreasury(assets);
+  }
+
   function _supply(
     ReserveConfig memory config,
     IPool pool,
@@ -503,6 +594,24 @@ contract ProtocolV3TestBase is CommonTestBase {
     assertApproxEqAbs(debtAfter,             debtBefore             - amount, 1);
     assertApproxEqAbs(underlyingATokenAfter, underlyingATokenBefore + amount, 1);
     assertApproxEqAbs(underlyingUserAfter,   underlyingUserBefore   - amount, 1);
+  }
+
+  function _liquidate(
+    ReserveConfig memory collateral,
+    ReserveConfig memory debt,
+    IPool pool,
+    address liquidator,
+    address user,
+    uint256 amount,
+    bool receiveAToken
+  ) internal {
+    deal2(debt.underlying, liquidator, amount);
+
+    vm.startPrank(liquidator);
+    IERC20(debt.underlying).approve(address(pool), amount);
+    console.log('LIQUIDATE: Collateral: %s, Debt: %s, Debt Amount: %s', collateral.symbol, debt.symbol, _formattedAmount(amount, debt.decimals));
+    pool.liquidationCall(collateral.underlying, debt.underlying, user, amount, receiveAToken);
+    vm.stopPrank();
   }
 
   function _formattedAmount(uint256 amount, uint256 decimals) internal pure returns (string memory) {
