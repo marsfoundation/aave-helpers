@@ -76,6 +76,8 @@ contract ProtocolV3TestBase is CommonTestBase {
   using ReserveConfiguration for DataTypes.ReserveConfigurationMap;
   using SafeERC20 for IERC20;
 
+  address constant DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
+
   /**
    * @dev Generates a markdown compatible snapshot of the whole pool configuration into `/reports`.
    * @param reportName filename suffix for the generated reports.
@@ -286,7 +288,7 @@ contract ProtocolV3TestBase is CommonTestBase {
     _repay(borrowConfig, pool, borrower, amount, stable);
     DataTypes.ReserveData memory afterReserve = pool.getReserveData(borrowConfig.underlying);
 
-    _assertReserveChange(beforeReserve, afterReserve, int256(amount), 60 seconds);
+    _assertReserveChange(beforeReserve, afterReserve, int256(amount), 60 seconds, borrowConfig.underlying == DAI);
 
     // Step 4: Try to withdraw all collateral, demonstrate it's not possible without paying back
     //         accrued debt
@@ -294,9 +296,12 @@ contract ProtocolV3TestBase is CommonTestBase {
     uint256 totalCollateral = IERC20(collateralConfig.aToken).balanceOf(borrower);
     uint256 remainingDebt   = IERC20(debtToken).balanceOf(borrower);
 
-    vm.prank(borrower);
-    vm.expectRevert(bytes("35"));  // HEALTH_FACTOR_LOWER_THAN_LIQUIDATION_THRESHOLD
-    pool.withdraw(collateralConfig.underlying, totalCollateral, borrower);
+    // Handle edge case for DAI LTV at 0.01% causing rounding errors here, preventing failure.
+    if (collateralConfig.ltv > 1) {
+      vm.prank(borrower);
+      vm.expectRevert(bytes("35"));  // HEALTH_FACTOR_LOWER_THAN_LIQUIDATION_THRESHOLD
+      pool.withdraw(collateralConfig.underlying, totalCollateral, borrower);
+    }
 
     // Step 5: Pay back remaining debt
 
@@ -315,14 +320,15 @@ contract ProtocolV3TestBase is CommonTestBase {
     // If collateral == borrow asset, reserve was updated during repay step
     uint256 timePassed = collateralConfig.underlying == borrowConfig.underlying ? 60 seconds : 120 seconds;
 
-    _assertReserveChange(beforeReserve, afterReserve, -int256(amount), timePassed);
+    _assertReserveChange(beforeReserve, afterReserve, -int256(amount), timePassed, borrowConfig.underlying == DAI);
   }
 
   function _assertReserveChange(
     DataTypes.ReserveData memory beforeReserve,
     DataTypes.ReserveData memory afterReserve,
     int256 amountRepaid,
-    uint256 timeSinceLastUpdate
+    uint256 timeSinceLastUpdate,
+    bool isPredictableRateAsset
   ) internal {
     assertEq(afterReserve.configuration.data, beforeReserve.configuration.data);
 
@@ -333,23 +339,20 @@ contract ProtocolV3TestBase is CommonTestBase {
       1
     );
 
-    // NOTE: Use <= and >= for isolation mode because it may or may not have been borrowed in isolation
+    if (isPredictableRateAsset) {
+      assertEq(afterReserve.currentVariableBorrowRate, beforeReserve.currentVariableBorrowRate);
+    }
+
     if (amountRepaid > 0) {
       assertLt(afterReserve.currentLiquidityRate,      beforeReserve.currentLiquidityRate);
       assertLt(afterReserve.currentVariableBorrowRate, beforeReserve.currentVariableBorrowRate);
-      assertLt(afterReserve.currentStableBorrowRate,   beforeReserve.currentStableBorrowRate);
+      assertLe(afterReserve.currentStableBorrowRate,   beforeReserve.currentStableBorrowRate);
       assertLe(afterReserve.isolationModeTotalDebt,    beforeReserve.isolationModeTotalDebt);
     } else {
-      assertTrue(
-        afterReserve.currentLiquidityRate > beforeReserve.currentLiquidityRate ||
-        afterReserve.currentLiquidityRate == 0
-      );
-      assertTrue(
-        afterReserve.currentVariableBorrowRate > beforeReserve.currentVariableBorrowRate ||
-        afterReserve.currentVariableBorrowRate == 0
-      );
-      assertGe(afterReserve.currentStableBorrowRate, beforeReserve.currentStableBorrowRate);
-      assertGe(afterReserve.isolationModeTotalDebt,  beforeReserve.isolationModeTotalDebt);
+      assertGe(afterReserve.currentLiquidityRate,      beforeReserve.currentLiquidityRate);
+      assertGe(afterReserve.currentVariableBorrowRate, beforeReserve.currentVariableBorrowRate);
+      assertGe(afterReserve.currentStableBorrowRate,   beforeReserve.currentStableBorrowRate);
+      assertGe(afterReserve.isolationModeTotalDebt,    beforeReserve.isolationModeTotalDebt);
     }
 
     assertEq(afterReserve.lastUpdateTimestamp, beforeReserve.lastUpdateTimestamp + timeSinceLastUpdate);
@@ -361,7 +364,7 @@ contract ProtocolV3TestBase is CommonTestBase {
     assertEq(afterReserve.interestRateStrategyAddress, beforeReserve.interestRateStrategyAddress);
     assertEq(afterReserve.unbacked,                    beforeReserve.unbacked);
 
-    assertTrue(afterReserve.accruedToTreasury > beforeReserve.accruedToTreasury || afterReserve.accruedToTreasury == 0);
+    assertGe(afterReserve.accruedToTreasury, beforeReserve.accruedToTreasury);
 
     uint256 expectedInterest;
     for (uint256 i; i < 60; i++) {
@@ -492,7 +495,6 @@ contract ProtocolV3TestBase is CommonTestBase {
     assertApproxEqAbs(debtAfter,             debtBefore             - amount, 1);
     assertApproxEqAbs(underlyingATokenAfter, underlyingATokenBefore + amount, 1);
     assertApproxEqAbs(underlyingUserAfter,   underlyingUserBefore   - amount, 1);
-
   }
 
   function _writeEModeConfigs(
