@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0
-pragma solidity  <0.9.0;
+pragma solidity >=0.7.5 <0.9.0;
 
 import 'forge-std/Test.sol';
 import {IAaveOracle, IPool, IPoolAddressesProvider, IPoolDataProvider, IDefaultInterestRateStrategy, DataTypes, IPoolConfigurator} from 'aave-address-book/AaveV3.sol';
@@ -376,7 +376,7 @@ contract ProtocolV3TestBase is CommonTestBase {
     assertGe(afterReserve.accruedToTreasury, beforeReserve.accruedToTreasury);
 
     uint256 expectedInterest;
-    for (uint256 i; i < 60; i++) {
+    for (uint256 i; i < timeSinceLastUpdate; i++) {
       expectedInterest +=
         uint256(beforeReserve.variableBorrowIndex)
         * uint256(beforeReserve.currentVariableBorrowRate)
@@ -385,11 +385,11 @@ contract ProtocolV3TestBase is CommonTestBase {
         / 1e27;
     }
 
-    // Accurate to 0.00003% (Most are accurate to roughly 1e-15%)
+    // Accurate to 0.000000000001%
     assertApproxEqRel(
       afterReserve.variableBorrowIndex,
       beforeReserve.variableBorrowIndex + expectedInterest,
-      0.03e-5 * 1e18
+      0.01e-12 * 1e18
     );
   }
 
