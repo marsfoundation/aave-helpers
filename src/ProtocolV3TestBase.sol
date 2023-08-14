@@ -434,11 +434,11 @@ contract ProtocolV3TestBase is CommonTestBase {
     assertEq(IERC20(testAssetConfig.variableDebtToken).balanceOf(user), 0, 'LIQUIDATION_DEBT_NOT_ZERO');
     uint256 collateralAmountAfter = IERC20(collateralConfig.aToken).balanceOf(user);
     assertLt(collateralAmountAfter, collateralAmountBefore, 'COLLATERAL_NO_DECREASE');
-    // Within 1% error is fine
+    // Within 0.01% error is fine
     assertApproxEqRel(
       IERC20(collateralConfig.aToken).balanceOf(liquidator),
       collateralAmountBefore - collateralAmountAfter,
-      0.01e18,
+      0.0001e18,
       'LIQUIDATOR_NO_RECEIVE_COLLATERAL'
     );
   }
