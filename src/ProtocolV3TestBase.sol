@@ -152,16 +152,25 @@ contract ProtocolV3TestBase is CommonTestBase {
     address borrowSupplier     = vm.addr(4);
 
     uint256 collateralAmount = _getTokenAmountByDollarValue(pool, collateralConfig, 100_000);
+    uint256 borrowSeedAmount = _getTokenAmountByDollarValue(pool, borrowConfig,     100_000);
 
     uint256 maxBorrowAmount = _getMaxBorrowAmount(
       pool, collateralConfig, borrowConfig, collateralAmount
     );
 
     if (
-      IERC20(borrowConfig.aToken).totalSupply() + maxBorrowAmount >
+      IERC20(borrowConfig.aToken).totalSupply() + maxBorrowAmount + borrowSeedAmount >
       (borrowConfig.supplyCap * 10 ** borrowConfig.decimals)
     ) {
-      console.log('Skip: %s, supply cap fully utilized', borrowConfig.symbol);
+      console.log('Skip borrow: %s, supply cap fully utilized', borrowConfig.symbol);
+      return;
+    }
+
+    if (
+      IERC20(collateralConfig.aToken).totalSupply() + collateralAmount * 2 >
+      (collateralConfig.supplyCap * 10 ** collateralConfig.decimals)
+    ) {
+      console.log('Skip collateral: %s, supply cap fully utilized', borrowConfig.symbol);
       return;
     }
 
@@ -171,8 +180,8 @@ contract ProtocolV3TestBase is CommonTestBase {
     }
 
     // Seed pool with assets to maximize precision in calculations (dusty markets reduce precision in general assertions)
-    _supply(collateralConfig, pool, address(this), _getTokenAmountByDollarValue(pool, collateralConfig, 100_000));
-    _supply(borrowConfig,     pool, address(this), _getTokenAmountByDollarValue(pool, borrowConfig, 100_000));
+    _supply(collateralConfig, pool, address(this), collateralAmount);
+    _supply(borrowConfig,     pool, address(this), borrowSeedAmount);
 
     // Set up collateral and borrow amounts
     _supply(collateralConfig, pool, collateralSupplier, collateralAmount);
@@ -400,7 +409,7 @@ contract ProtocolV3TestBase is CommonTestBase {
     uint256 underlyingATokenBefore = IERC20(config.underlying).balanceOf(config.aToken);
     uint256 underlyingUserBefore   = IERC20(config.underlying).balanceOf(user);
 
-    console.log('SUPPLY: %s, Amount: %s', config.symbol, amount);
+    console.log('SUPPLY: %s, Amount: %s', config.symbol, _formattedAmount(amount, config.decimals));
     vm.startPrank(user);
     IERC20(config.underlying).safeApprove(address(pool), amount);
     pool.supply(config.underlying, amount, user, 0);
@@ -427,7 +436,7 @@ contract ProtocolV3TestBase is CommonTestBase {
 
     vm.prank(user);
     uint256 amountOut = pool.withdraw(config.underlying, amount, user);
-    console.log('WITHDRAW: %s, Amount: %s', config.symbol, amountOut);
+    console.log('WITHDRAW: %s, Amount: %s', config.symbol, _formattedAmount(amountOut, config.decimals));
 
     uint256 aTokenAfter           = IERC20(config.aToken).balanceOf(user);
     uint256 underlyingATokenAfter = IERC20(config.underlying).balanceOf(config.aToken);
@@ -454,7 +463,7 @@ contract ProtocolV3TestBase is CommonTestBase {
     uint256 underlyingATokenBefore = IERC20(config.underlying).balanceOf(config.aToken);
     uint256 underlyingUserBefore   = IERC20(config.underlying).balanceOf(user);
 
-    console.log('BORROW: %s, Amount %s, Stable: %s', config.symbol, amount, stable);
+    console.log('BORROW: %s, Amount %s, Stable: %s', config.symbol, _formattedAmount(amount, config.decimals), stable);
     vm.prank(user);
     pool.borrow(config.underlying, amount, stable ? 1 : 2, 0, user);
 
@@ -482,7 +491,7 @@ contract ProtocolV3TestBase is CommonTestBase {
     uint256 underlyingATokenBefore = IERC20(config.underlying).balanceOf(config.aToken);
     uint256 underlyingUserBefore   = IERC20(config.underlying).balanceOf(user);
 
-    console.log('REPAY: %s, Amount: %s', config.symbol, amount);
+    console.log('REPAY: %s, Amount: %s', config.symbol, _formattedAmount(amount, config.decimals));
     vm.startPrank(user);
     IERC20(config.underlying).safeApprove(address(pool), amount);
     pool.repay(config.underlying, amount, stable ? 1 : 2, user);
@@ -495,6 +504,10 @@ contract ProtocolV3TestBase is CommonTestBase {
     assertApproxEqAbs(debtAfter,             debtBefore             - amount, 1);
     assertApproxEqAbs(underlyingATokenAfter, underlyingATokenBefore + amount, 1);
     assertApproxEqAbs(underlyingUserAfter,   underlyingUserBefore   - amount, 1);
+  }
+
+  function _formattedAmount(uint256 amount, uint256 decimals) internal pure returns (string memory) {
+    return string(abi.encodePacked(vm.toString(amount / 10 ** decimals), ".", vm.toString(amount % 10 ** decimals)));
   }
 
   function _writeEModeConfigs(
