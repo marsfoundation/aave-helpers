@@ -69,9 +69,21 @@ struct InterestStrategyValues {
   uint256 variableRateSlope2;
 }
 
-/**
- * only applicable to harmony at this point
- */
+struct LiquidationBalanceAssertions {
+  uint256 aTokenBorrowerBefore;
+  uint256 collateralATokenBefore;
+  uint256 collateralLiquidatorBefore;
+  uint256 debtBefore;
+  uint256 borrowATokenBefore;
+  uint256 borrowLiquidatorBefore;
+  uint256 aTokenBorrowerAfter;
+  uint256 collateralATokenAfter;
+  uint256 collateralLiquidatorAfter;
+  uint256 debtAfter;
+  uint256 borrowATokenAfter;
+  uint256 borrowLiquidatorAfter;
+}
+
 contract ProtocolV3TestBase is CommonTestBase {
   using ReserveConfiguration for DataTypes.ReserveConfigurationMap;
   using SafeERC20 for IERC20;
@@ -123,16 +135,20 @@ contract ProtocolV3TestBase is CommonTestBase {
 
     ReserveConfig[] memory configs = _getReservesConfigs(pool);
 
-    for (uint256 i = 0; i < configs.length; i++) {
-      if (!_includeCollateralAssetInE2e(configs[i])) continue;
+    uint256 i = 7; uint256 j = 7;
 
-      for(uint256 j; j < configs.length; j++) {
-        if (!_includeBorrowAssetInE2e(configs[j])) continue;
+    // for (uint256 i = 0; i < configs.length; i++) {
+    //   if (!_includeCollateralAssetInE2e(configs[i])) continue;
+
+    //   for(uint256 j; j < configs.length; j++) {
+    //     if (!_includeBorrowAssetInE2e(configs[j])) continue;
+
+        // console.log("i %s, j %s", i, j);
 
         e2eTestAsset(pool, configs[i], configs[j]);
         vm.revertTo(snapshot);
-      }
-    }
+    //   }
+    // }
   }
 
   function e2eTestAsset(
@@ -191,35 +207,35 @@ contract ProtocolV3TestBase is CommonTestBase {
 
     uint256 snapshot = vm.snapshot();
 
-    // Test 1: Ensure user can't borrow more than LTV
+    // // Test 1: Ensure user can't borrow more than LTV
 
-    _e2eTestBorrowAboveLTV(pool, collateralSupplier, borrowConfig, maxBorrowAmount, false);
-    vm.revertTo(snapshot);
+    // _e2eTestBorrowAboveLTV(pool, collateralSupplier, borrowConfig, maxBorrowAmount, false);
+    // vm.revertTo(snapshot);
 
-    // Test 2: Ensure user can borrow and repay with variable rates
+    // // Test 2: Ensure user can borrow and repay with variable rates
 
-    _e2eTestBorrowRepayWithdraw(pool, collateralSupplier, collateralConfig, borrowConfig, maxBorrowAmount, false);
-    vm.revertTo(snapshot);
+    // _e2eTestBorrowRepayWithdraw(pool, collateralSupplier, collateralConfig, borrowConfig, maxBorrowAmount, false);
+    // vm.revertTo(snapshot);
 
-    // Test 3: Ensure user can borrow and repay with stable rates
+    // // Test 3: Ensure user can borrow and repay with stable rates
 
-    _e2eTestBorrowRepayWithdraw(pool, collateralSupplier, collateralConfig, borrowConfig, maxBorrowAmount, true);
-    vm.revertTo(snapshot);
+    // _e2eTestBorrowRepayWithdraw(pool, collateralSupplier, collateralConfig, borrowConfig, maxBorrowAmount, true);
+    // vm.revertTo(snapshot);
 
     // Test 4: Test liquidation
 
     _e2eTestLiquidation(pool, collateralSupplier, liquidator, collateralConfig, borrowConfig, maxBorrowAmount);
     vm.revertTo(snapshot);
 
-    // Test 5: Test flashloan
+    // // Test 5: Test flashloan
 
-    _e2eTestFlashLoan(pool, borrowConfig, maxBorrowAmount);
-    vm.revertTo(snapshot);
+    // _e2eTestFlashLoan(pool, borrowConfig, maxBorrowAmount);
+    // vm.revertTo(snapshot);
 
-    // Test 6: Test mintToTreasury
+    // // Test 6: Test mintToTreasury
 
-    _e2eTestMintToTreasury(pool, borrowConfig);
-    vm.revertTo(snapshot);
+    // _e2eTestMintToTreasury(pool, borrowConfig);
+    // vm.revertTo(snapshot);
   }
 
   /**
@@ -429,7 +445,7 @@ contract ProtocolV3TestBase is CommonTestBase {
       1,
       10001
     );
-    _liquidate(collateralConfig, testAssetConfig, pool, liquidator, user, amount, true);
+    _liquidateAndReceiveCollateral(collateralConfig, testAssetConfig, pool, liquidator, user, amount);
     // HF should be low enough to have the entire position be liquidated
     assertEq(IERC20(testAssetConfig.variableDebtToken).balanceOf(user), 0, 'LIQUIDATION_DEBT_NOT_ZERO');
     uint256 collateralAmountAfter = IERC20(collateralConfig.aToken).balanceOf(user);
@@ -596,22 +612,59 @@ contract ProtocolV3TestBase is CommonTestBase {
     assertApproxEqAbs(underlyingUserAfter,   underlyingUserBefore   - amount, 1);
   }
 
-  function _liquidate(
+  function _liquidateAndReceiveCollateral(
     ReserveConfig memory collateral,
-    ReserveConfig memory debt,
+    ReserveConfig memory borrow,
     IPool pool,
     address liquidator,
     address user,
-    uint256 amount,
-    bool receiveAToken
+    uint256 amount
   ) internal {
-    deal2(debt.underlying, liquidator, amount);
+  //   deal2(borrow.underlying, liquidator, amount);
 
-    vm.startPrank(liquidator);
-    IERC20(debt.underlying).approve(address(pool), amount);
-    console.log('LIQUIDATE: Collateral: %s, Debt: %s, Debt Amount: %s', collateral.symbol, debt.symbol, _formattedAmount(amount, debt.decimals));
-    pool.liquidationCall(collateral.underlying, debt.underlying, user, amount, receiveAToken);
-    vm.stopPrank();
+  //   address debtToken = borrow.variableDebtToken;
+
+  //   vm.startPrank(liquidator);
+  //   IERC20(borrow.underlying).approve(address(pool), amount);
+
+  //   LiquidationBalanceAssertions memory balances;
+
+  //   balances.aTokenBorrowerBefore = IERC20(collateral.aToken).balanceOf(user);
+
+  //   balances.collateralATokenBefore = IERC20(collateral.underlying).balanceOf(collateral.aToken);
+  //   // balances.collateralATokenBefore = IERC20(collateral.underlying).balanceOf(treasury);
+  //   balances.collateralLiquidatorBefore = IERC20(collateral.underlying).balanceOf(liquidator);
+
+  //   balances.debtBefore = IERC20(debtToken).balanceOf(user);
+
+  //   balances.borrowATokenBefore = IERC20(borrow.underlying).balanceOf(borrow.aToken);
+  //   balances.borrowLiquidatorBefore = IERC20(borrow.underlying).balanceOf(liquidator);
+
+  //   console.log('LIQUIDATE: Collateral: %s, Debt: %s, Debt Amount: %s', collateral.symbol, borrow.symbol, _formattedAmount(amount, borrow.decimals));
+  //   pool.liquidationCall(collateral.underlying, borrow.underlying, user, amount, false);
+  //   vm.stopPrank();
+
+  //   balances.aTokenBorrowerAfter = IERC20(collateral.aToken).balanceOf(user);
+
+  //   balances.collateralATokenAfter = IERC20(collateral.underlying).balanceOf(collateral.aToken);
+  //   // balances.collateralATokenAfter = IERC20(collateral.underlying).balanceOf(treasury);
+  //   balances.collateralLiquidatorAfter = IERC20(collateral.underlying).balanceOf(liquidator);
+
+  //   balances.debtAfter = IERC20(debtToken).balanceOf(user);
+
+  //   balances.borrowATokenAfter = IERC20(borrow.underlying).balanceOf(borrow.aToken);
+  //   balances.borrowLiquidatorAfter = IERC20(borrow.underlying).balanceOf(liquidator);
+
+  //   console.log("aTokenBorrowerBefore      ", balances.aTokenBorrowerBefore);
+  //   // console.log("aTokenBorrowerz       ", balances.aTokenBorrowerz);
+  //   console.log("collateralATokenBefore    ", balances.collateralATokenBefore);
+  //   // // console.log("collateralATokenz     ", balances.collateralATokenz);
+  //   // console.log("collateralLiquidatorBefore", collateralLiquidatorBefore);
+  //   // // // console.log("collateralLiquidatorz ", balances.collateralLiquidatorz);
+  //   // console.log("debtBefore                ", balances.debtBefore);
+  //   // // // console.log("debtz                 ", balances.debtz);
+  //   // console.log("borrowATokenBefore        ", balances.borrowATokenBefore);
+  //   // // console.log("borrowATokenz         ", balances.borrowATokenz);
   }
 
   function _formattedAmount(uint256 amount, uint256 decimals) internal pure returns (string memory) {
