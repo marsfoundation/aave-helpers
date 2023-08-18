@@ -668,7 +668,8 @@ contract ProtocolV3TestBase is CommonTestBase {
     console.log("liquidationBonus1          ", collateral.liquidationBonus);
     console.log("liquidationBonus2          ", borrow.liquidationBonus);
 
-    ( uint256 totalCollateralToLiquidate, uint256 amountToProtocol ) = _getLiquidationAmounts(collateral, borrow, pool, balances.debtBefore);
+    ( uint256 totalCollateralToLiquidate, uint256 amountToProtocol )
+      = _getLiquidationAmounts(collateral, borrow, pool, balances.debtBefore);
 
     balances.aTokenBorrowerAfter = IERC20(collateral.aToken).balanceOf(user);
     balances.aTokenTreasuryAfter = IERC20(collateral.aToken).balanceOf(IAToken(collateral.aToken).RESERVE_TREASURY_ADDRESS());
@@ -683,7 +684,7 @@ contract ProtocolV3TestBase is CommonTestBase {
 
     assertEq(balances.debtAfter, 0);  // All debt removed, full liquidation
 
-    // // Checks to ensure diffs aren't zero
+    // Checks to ensure diffs aren't zero
     assertLt(balances.collateralATokenAfter,     balances.collateralATokenBefore);      // Collateral balance of aToken decreases
     assertGt(balances.collateralLiquidatorAfter, balances.collateralLiquidatorBefore);  // Liquidator receives collateral
     assertLt(balances.aTokenBorrowerAfter,       balances.aTokenBorrowerBefore);        // Collateral removed from aToken liquidity
@@ -692,23 +693,33 @@ contract ProtocolV3TestBase is CommonTestBase {
       assertGt(balances.aTokenTreasuryAfter, balances.aTokenTreasuryBefore);  // Treasury receives collateral aToken if protocol fee > 0
     }
 
-    assertApproxEqAbs(balances.aTokenBorrowerBefore - balances.aTokenBorrowerAfter, totalCollateralToLiquidate, 2);  // Borrower loses all collateral accounting in system
+    assertApproxEqAbs(balances.aTokenBorrowerBefore - balances.aTokenBorrowerAfter,  totalCollateralToLiquidate, 2);  // Borrower loses all collateral accounting in system
+    assertApproxEqAbs(balances.aTokenTreasuryAfter  - balances.aTokenTreasuryBefore, amountToProtocol,           1);  // Treasury receives expected amount in aToken
 
     if (collateral.underlying == borrow.underlying) {
       assertGt(balances.borrowLiquidatorAfter,     balances.borrowLiquidatorBefore);  // Liquidator gets liquidation bonus
       assertLt(balances.borrowATokenAfter,         balances.borrowATokenBefore);      // borrowAsset balance of aToken decreases because of liquidation bonus
+
+      // Liquidator uses debtBefore to receive (totalCollateralToLiquidate - amountToProtocol)
+      uint256 netCollateralChange = (totalCollateralToLiquidate - amountToProtocol) - balances.debtBefore;
+
+      assertApproxEqAbs(balances.borrowLiquidatorAfter - balances.borrowLiquidatorBefore, netCollateralChange, 1);  // Liquidator nets the expected amount of borrowAsset
+      assertApproxEqAbs(balances.borrowATokenBefore    - balances.borrowATokenAfter,      netCollateralChange, 1);  // aToken liquidity increases by same amount
+
+      // Same values but adding to be comprehensive
+      assertApproxEqAbs(balances.collateralLiquidatorAfter - balances.collateralLiquidatorBefore, netCollateralChange, 1);  // Liquidator receives expected collateral
+      assertApproxEqAbs(balances.collateralATokenBefore    - balances.collateralATokenAfter,      netCollateralChange, 1);  // Collateral aToken liquidity decreases by expected amount
       // TODO: Add liquidation bonus assertions
       return;
     }
 
-    assertLt(balances.borrowLiquidatorAfter,     balances.borrowLiquidatorBefore);  // Liquidator uses borrowAsset to buy collateral
-    assertGt(balances.borrowATokenAfter,         balances.borrowATokenBefore);      // borrowAsset balance of aToken increases
+    assertLt(balances.borrowLiquidatorAfter, balances.borrowLiquidatorBefore);  // Liquidator uses borrowAsset to buy collateral
+    assertGt(balances.borrowATokenAfter,     balances.borrowATokenBefore);      // borrowAsset balance of aToken increases
 
     assertEq(balances.borrowLiquidatorBefore - balances.borrowLiquidatorAfter, balances.debtBefore);  // Liquidator borrowAsset funds equal amount removed from debt accounting
     assertEq(balances.borrowATokenAfter      - balances.borrowATokenBefore,    balances.debtBefore);  // aToken liquidity increases by same amount
 
-    // 1/2 unit diff to account for liquidity index calculation on _transfer in aToken
-    assertApproxEqAbs(balances.aTokenTreasuryAfter       - balances.aTokenTreasuryBefore,       amountToProtocol,                              1);  // Treasury receives expected amount in aToken
+    // 1 unit diff to account for liquidity index calculation on _transfer in aToken
     assertApproxEqAbs(balances.collateralLiquidatorAfter - balances.collateralLiquidatorBefore, totalCollateralToLiquidate - amountToProtocol, 1);  // Liquidator receives expected collateral
     assertApproxEqAbs(balances.collateralATokenBefore    - balances.collateralATokenAfter,      totalCollateralToLiquidate - amountToProtocol, 1);  // Collateral aToken liquidity decreases by expected amount
 
@@ -719,7 +730,6 @@ contract ProtocolV3TestBase is CommonTestBase {
       (balances.aTokenBorrowerBefore - balances.aTokenBorrowerAfter) - (balances.aTokenTreasuryAfter - balances.aTokenTreasuryBefore),
       1
     );
-
 
     console.log("balances.aTokenBorrowerBefore - balances.aTokenBorrowerAfter", balances.aTokenBorrowerBefore - balances.aTokenBorrowerAfter);
     console.log("balances.aTokenTreasuryAfter - balances.aTokenTreasuryBefore", balances.aTokenTreasuryAfter - balances.aTokenTreasuryBefore);
