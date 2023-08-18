@@ -13,10 +13,6 @@ import {ReserveConfiguration} from 'aave-v3-core/contracts/protocol/libraries/co
 
 import { IAToken } from 'aave-v3-core/contracts/interfaces/IAToken.sol';
 
-import { BorrowLogic }      from 'aave-v3-core/contracts/protocol/libraries/logic/BorrowLogic.sol';
-import { LiquidationLogic } from 'aave-v3-core/contracts/protocol/libraries/logic/LiquidationLogic.sol';
-import { SupplyLogic }      from 'aave-v3-core/contracts/protocol/libraries/logic/SupplyLogic.sol';
-
 import { DataTypes } from 'aave-v3-core/contracts/protocol/libraries/types/DataTypes.sol';
 
 interface IERC20Detailed is IERC20 {
@@ -139,25 +135,6 @@ contract ProtocolV3TestBase is CommonTestBase {
     uint256 snapshot = vm.snapshot();
 
     ReserveConfig[] memory configs = _getReservesConfigs(pool);
-
-    address liquidationLogic = deployCode("LiquidationLogic.sol:LiquidationLogic", bytes(""));
-
-    address deployedLiquidationLogic = 0x82Ba85d3E0D48758A9A4505C6ACf0e95fFDCBE02;
-
-    vm.etch(deployedLiquidationLogic, liquidationLogic.code);
-
-    // address borrowLogic = deployCode("BorrowLogic.sol:BorrowLogic", bytes(""));
-    // address supplyLogic = deployCode("SupplyLogic.sol:SupplyLogic", bytes(""));
-
-    // address deployedBorrowLogic = 0x5d834EAD0a80CF3b88c06FeeD6e8E0Fcae2daEE5;
-    // address deployedSupplyLogic = 0x39dF4b1329D41A9AE20e17BeFf39aAbd2f049128;
-
-    // vm.etch(deployedBorrowLogic, borrowLogic.code);
-    // vm.etch(deployedSupplyLogic, supplyLogic.code);
-
-
-
-    uint256 i = 7; uint256 j = 7;
 
     for (uint256 i = 0; i < configs.length; i++) {
       if (!_includeCollateralAssetInE2e(configs[i])) {
@@ -665,9 +642,6 @@ contract ProtocolV3TestBase is CommonTestBase {
     pool.liquidationCall(collateral.underlying, borrow.underlying, user, amount, false);
     vm.stopPrank();
 
-    console.log("liquidationBonus1          ", collateral.liquidationBonus);
-    console.log("liquidationBonus2          ", borrow.liquidationBonus);
-
     ( uint256 totalCollateralToLiquidate, uint256 amountToProtocol )
       = _getLiquidationAmounts(collateral, borrow, pool, balances.debtBefore);
 
@@ -730,24 +704,6 @@ contract ProtocolV3TestBase is CommonTestBase {
       (balances.aTokenBorrowerBefore - balances.aTokenBorrowerAfter) - (balances.aTokenTreasuryAfter - balances.aTokenTreasuryBefore),
       1
     );
-
-    console.log("balances.aTokenBorrowerBefore - balances.aTokenBorrowerAfter", balances.aTokenBorrowerBefore - balances.aTokenBorrowerAfter);
-    console.log("balances.aTokenTreasuryAfter - balances.aTokenTreasuryBefore", balances.aTokenTreasuryAfter - balances.aTokenTreasuryBefore);
-
-    console.log("collateral.liquidationProtocolFee", collateral.liquidationProtocolFee);
-
-    console.log("aTokenBorrowerBefore      ", balances.aTokenBorrowerBefore);
-    console.log("aTokenBorrowerAfter       ", balances.aTokenBorrowerAfter);
-    console.log("collateralATokenBefore    ", balances.collateralATokenBefore);
-    console.log("collateralATokenAfter     ", balances.collateralATokenAfter);
-    console.log("aTokenTreasuryBefore      ", balances.aTokenTreasuryBefore);
-    console.log("aTokenTreasuryAfter       ", balances.aTokenTreasuryAfter);
-    console.log("collateralLiquidatorBefore", balances.collateralLiquidatorBefore);
-    console.log("collateralLiquidatorAfter ", balances.collateralLiquidatorAfter);
-    console.log("debtBefore                ", balances.debtBefore);
-    console.log("debtAfter                 ", balances.debtAfter);
-    console.log("borrowATokenBefore        ", balances.borrowATokenBefore);
-    console.log("borrowATokenAfter         ", balances.borrowATokenAfter);
   }
 
   function _getLiquidationAmounts(
@@ -771,13 +727,6 @@ contract ProtocolV3TestBase is CommonTestBase {
     uint256 bonusCollateral = totalCollateralToLiquidate - totalCollateralToLiquidate * 100_00 / collateral.liquidationBonus;
 
     amountToProtocol = bonusCollateral * collateral.liquidationProtocolFee / 100_00;
-
-    console.log("\n\n");
-    console.log("totalCollateralToLiquidate", totalCollateralToLiquidate);
-    console.log("bonusCollateral           ", bonusCollateral);
-    console.log("liquidationBonus          ", collateral.liquidationBonus);
-    console.log("liquidationBonus          ", borrow.liquidationBonus);
-    console.log("amountToProtocol          ", amountToProtocol);
   }
 
   function _formattedAmount(uint256 amount, uint256 decimals) internal pure returns (string memory) {
