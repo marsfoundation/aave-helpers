@@ -212,7 +212,7 @@ contract ProtocolV3TestBase is CommonTestBase {
 
     uint256 snapshot = vm.snapshot();
 
-    // // Test 1: Ensure user can't borrow more than LTV
+    // Test 1: Ensure user can't borrow more than LTV
 
     _e2eTestBorrowAboveLTV(pool, collateralSupplier, borrowConfig, maxBorrowAmount, false);
     vm.revertTo(snapshot);
