@@ -11,8 +11,7 @@ import {ProxyHelpers} from './ProxyHelpers.sol';
 import {CommonTestBase, ReserveTokens} from './CommonTestBase.sol';
 import {ReserveConfiguration} from 'aave-v3-core/contracts/protocol/libraries/configuration/ReserveConfiguration.sol';
 
-import { BorrowLogic } from 'aave-v3-core/contracts/protocol/libraries/logic/BorrowLogic.sol';
-import { SupplyLogic } from 'aave-v3-core/contracts/protocol/libraries/logic/SupplyLogic.sol';
+import { IAToken } from 'aave-v3-core/contracts/interfaces/IAToken.sol';
 
 import { DataTypes } from 'aave-v3-core/contracts/protocol/libraries/types/DataTypes.sol';
 
@@ -69,9 +68,23 @@ struct InterestStrategyValues {
   uint256 variableRateSlope2;
 }
 
-/**
- * only applicable to harmony at this point
- */
+struct LiquidationBalanceAssertions {
+  uint256 aTokenBorrowerBefore;
+  uint256 collateralATokenBefore;
+  uint256 aTokenTreasuryBefore;
+  uint256 collateralLiquidatorBefore;
+  uint256 debtBefore;
+  uint256 borrowATokenBefore;
+  uint256 borrowLiquidatorBefore;
+  uint256 aTokenBorrowerAfter;
+  uint256 collateralATokenAfter;
+  uint256 aTokenTreasuryAfter;
+  uint256 collateralLiquidatorAfter;
+  uint256 debtAfter;
+  uint256 borrowATokenAfter;
+  uint256 borrowLiquidatorAfter;
+}
+
 contract ProtocolV3TestBase is CommonTestBase {
   using ReserveConfiguration for DataTypes.ReserveConfigurationMap;
   using SafeERC20 for IERC20;
@@ -124,10 +137,16 @@ contract ProtocolV3TestBase is CommonTestBase {
     ReserveConfig[] memory configs = _getReservesConfigs(pool);
 
     for (uint256 i = 0; i < configs.length; i++) {
-      if (!_includeCollateralAssetInE2e(configs[i])) continue;
+      if (!_includeCollateralAssetInE2e(configs[i])) {
+        console.log('Skip collateral: %s, not configured', configs[i].symbol);
+        continue;
+      }
 
       for(uint256 j; j < configs.length; j++) {
-        if (!_includeBorrowAssetInE2e(configs[j])) continue;
+        if (!_includeBorrowAssetInE2e(configs[j])) {
+          console.log('Skip borrow: %s, not configured', configs[i].symbol);
+          continue;
+        }
 
         e2eTestAsset(pool, configs[i], configs[j]);
         vm.revertTo(snapshot);
@@ -208,7 +227,7 @@ contract ProtocolV3TestBase is CommonTestBase {
 
     // Test 4: Test liquidation
 
-    _e2eTestLiquidation(pool, collateralSupplier, liquidator, collateralConfig, borrowConfig, maxBorrowAmount);
+    _e2eTestLiquidationReceiveCollateral(pool, collateralSupplier, liquidator, collateralConfig, borrowConfig, maxBorrowAmount);
     vm.revertTo(snapshot);
 
     // Test 5: Test flashloan
@@ -233,16 +252,20 @@ contract ProtocolV3TestBase is CommonTestBase {
     return !config.isFrozen && config.isActive && !config.isPaused && config.usageAsCollateralEnabled;
   }
 
+  function _getTokenPrice(IPool pool, ReserveConfig memory config) internal view returns (uint256) {
+    IPoolAddressesProvider addressesProvider = IPoolAddressesProvider(pool.ADDRESSES_PROVIDER());
+    IAaveOracle oracle = IAaveOracle(addressesProvider.getPriceOracle());
+    return oracle.getAssetPrice(config.underlying);
+  }
+
   function _getTokenAmountByDollarValue(
     IPool pool,
     ReserveConfig memory config,
     uint256 dollarValue
   ) internal view returns (uint256) {
-    IPoolAddressesProvider addressesProvider = IPoolAddressesProvider(pool.ADDRESSES_PROVIDER());
-    IAaveOracle oracle = IAaveOracle(addressesProvider.getPriceOracle());
-    uint256 latestAnswer = oracle.getAssetPrice(config.underlying);
+    uint256 price = _getTokenPrice(pool, config);
 
-    return (dollarValue * 10 ** (8 + config.decimals)) / latestAnswer;
+    return (dollarValue * 10 ** (8 + config.decimals)) / price;
   }
 
   function _getMaxBorrowAmount(
@@ -251,13 +274,11 @@ contract ProtocolV3TestBase is CommonTestBase {
     ReserveConfig memory borrowConfig,
     uint256 collateralAmount
   ) internal view returns (uint256) {
-    IPoolAddressesProvider addressesProvider = IPoolAddressesProvider(pool.ADDRESSES_PROVIDER());
-    IAaveOracle oracle = IAaveOracle(addressesProvider.getPriceOracle());
     return collateralAmount
-      * oracle.getAssetPrice(collateralConfig.underlying)
+      * _getTokenPrice(pool, collateralConfig)
       * collateralConfig.ltv
       * (10 ** borrowConfig.decimals)
-      / oracle.getAssetPrice(borrowConfig.underlying)
+      / _getTokenPrice(pool, borrowConfig)
       / (10 ** collateralConfig.decimals)
       / 100_00;
   }
@@ -408,16 +429,15 @@ contract ProtocolV3TestBase is CommonTestBase {
     return IERC20(config.aToken).totalSupply() + supplyAmount > (config.supplyCap * 10 ** config.decimals);
   }
 
-  function _e2eTestLiquidation(
+  function _e2eTestLiquidationReceiveCollateral(
     IPool pool,
-    address user,
+    address borrower,
     address liquidator,
     ReserveConfig memory collateralConfig,
-    ReserveConfig memory testAssetConfig,
+    ReserveConfig memory borrowConfig,
     uint256 amount
   ) internal {
-    uint256 collateralAmountBefore = IERC20(collateralConfig.aToken).balanceOf(user);
-    this._borrow(testAssetConfig, pool, user, amount, false);
+    this._borrow(borrowConfig, pool, borrower, amount, false);
     IPoolConfigurator configurator = IPoolConfigurator(
       IPoolAddressesProvider(pool.ADDRESSES_PROVIDER()).getPoolConfigurator()
     );
@@ -427,20 +447,10 @@ contract ProtocolV3TestBase is CommonTestBase {
       collateralConfig.underlying,
       1,
       1,
-      10001
+      10700
     );
-    _liquidate(collateralConfig, testAssetConfig, pool, liquidator, user, amount, true);
-    // HF should be low enough to have the entire position be liquidated
-    assertEq(IERC20(testAssetConfig.variableDebtToken).balanceOf(user), 0, 'LIQUIDATION_DEBT_NOT_ZERO');
-    uint256 collateralAmountAfter = IERC20(collateralConfig.aToken).balanceOf(user);
-    assertLt(collateralAmountAfter, collateralAmountBefore, 'COLLATERAL_NO_DECREASE');
-    // Within 0.01% error is fine
-    assertApproxEqRel(
-      IERC20(collateralConfig.aToken).balanceOf(liquidator),
-      collateralAmountBefore - collateralAmountAfter,
-      0.0001e18,
-      'LIQUIDATOR_NO_RECEIVE_COLLATERAL'
-    );
+
+    _liquidateAndReceiveCollateral(collateralConfig, borrowConfig, pool, liquidator, borrower, amount);
   }
 
   function _e2eTestFlashLoan(
@@ -596,22 +606,125 @@ contract ProtocolV3TestBase is CommonTestBase {
     assertApproxEqAbs(underlyingUserAfter,   underlyingUserBefore   - amount, 1);
   }
 
-  function _liquidate(
+  function _liquidateAndReceiveCollateral(
     ReserveConfig memory collateral,
-    ReserveConfig memory debt,
+    ReserveConfig memory borrow,
     IPool pool,
     address liquidator,
     address user,
-    uint256 amount,
-    bool receiveAToken
+    uint256 amount
   ) internal {
-    deal2(debt.underlying, liquidator, amount);
+    deal2(borrow.underlying, liquidator, amount);
+
+    address debtToken = borrow.variableDebtToken;
+
+    LiquidationBalanceAssertions memory balances;
+
+    balances.aTokenBorrowerBefore = IERC20(collateral.aToken).balanceOf(user);
+    balances.aTokenTreasuryBefore = IERC20(collateral.aToken).balanceOf(IAToken(collateral.aToken).RESERVE_TREASURY_ADDRESS());
+
+    balances.collateralATokenBefore     = IERC20(collateral.underlying).balanceOf(collateral.aToken);
+    balances.collateralLiquidatorBefore = IERC20(collateral.underlying).balanceOf(liquidator);
+
+    balances.debtBefore = IERC20(debtToken).balanceOf(user);
+
+    balances.borrowATokenBefore     = IERC20(borrow.underlying).balanceOf(borrow.aToken);
+    balances.borrowLiquidatorBefore = IERC20(borrow.underlying).balanceOf(liquidator);
+
+    // TODO: Add totalSupply assertions
 
     vm.startPrank(liquidator);
-    IERC20(debt.underlying).approve(address(pool), amount);
-    console.log('LIQUIDATE: Collateral: %s, Debt: %s, Debt Amount: %s', collateral.symbol, debt.symbol, _formattedAmount(amount, debt.decimals));
-    pool.liquidationCall(collateral.underlying, debt.underlying, user, amount, receiveAToken);
+    IERC20(borrow.underlying).approve(address(pool), amount);
+
+    console.log('LIQUIDATE: Collateral: %s, Debt: %s, Debt Amount: %s', collateral.symbol, borrow.symbol, _formattedAmount(amount, borrow.decimals));
+    pool.liquidationCall(collateral.underlying, borrow.underlying, user, amount, false);
     vm.stopPrank();
+
+    balances.aTokenBorrowerAfter = IERC20(collateral.aToken).balanceOf(user);
+    balances.aTokenTreasuryAfter = IERC20(collateral.aToken).balanceOf(IAToken(collateral.aToken).RESERVE_TREASURY_ADDRESS());
+
+    balances.collateralATokenAfter     = IERC20(collateral.underlying).balanceOf(collateral.aToken);
+    balances.collateralLiquidatorAfter = IERC20(collateral.underlying).balanceOf(liquidator);
+
+    balances.debtAfter = IERC20(debtToken).balanceOf(user);
+
+    balances.borrowATokenAfter     = IERC20(borrow.underlying).balanceOf(borrow.aToken);
+    balances.borrowLiquidatorAfter = IERC20(borrow.underlying).balanceOf(liquidator);
+
+    assertEq(balances.debtAfter, 0);  // All debt removed, full liquidation
+
+    // Checks to ensure diffs aren't zero
+    assertLt(balances.collateralATokenAfter,     balances.collateralATokenBefore);      // Collateral balance of aToken decreases
+    assertGt(balances.collateralLiquidatorAfter, balances.collateralLiquidatorBefore);  // Liquidator receives collateral
+    assertLt(balances.aTokenBorrowerAfter,       balances.aTokenBorrowerBefore);        // Collateral removed from aToken liquidity
+
+    if (collateral.liquidationProtocolFee > 0) {
+      assertGt(balances.aTokenTreasuryAfter, balances.aTokenTreasuryBefore);  // Treasury receives collateral aToken if protocol fee > 0
+    }
+
+    ( uint256 totalCollateralToLiquidate, uint256 amountToProtocol )
+      = _getLiquidationAmounts(collateral, borrow, pool, balances.debtBefore);
+
+    assertApproxEqAbs(balances.aTokenBorrowerBefore - balances.aTokenBorrowerAfter,  totalCollateralToLiquidate, 2);  // Borrower loses all collateral accounting in system
+    assertApproxEqAbs(balances.aTokenTreasuryAfter  - balances.aTokenTreasuryBefore, amountToProtocol,           1);  // Treasury receives expected amount in aToken
+
+    if (collateral.underlying == borrow.underlying) {
+      assertGt(balances.borrowLiquidatorAfter,     balances.borrowLiquidatorBefore);  // Liquidator gets liquidation bonus
+      assertLt(balances.borrowATokenAfter,         balances.borrowATokenBefore);      // borrowAsset balance of aToken decreases because of liquidation bonus
+
+      // Liquidator uses debtBefore to receive (totalCollateralToLiquidate - amountToProtocol)
+      uint256 netCollateralChange = (totalCollateralToLiquidate - amountToProtocol) - balances.debtBefore;
+
+      assertApproxEqAbs(balances.borrowLiquidatorAfter - balances.borrowLiquidatorBefore, netCollateralChange, 1);  // Liquidator nets the expected amount of borrowAsset
+      assertApproxEqAbs(balances.borrowATokenBefore    - balances.borrowATokenAfter,      netCollateralChange, 1);  // aToken liquidity increases by same amount
+
+      // Same values but adding to be comprehensive
+      assertApproxEqAbs(balances.collateralLiquidatorAfter - balances.collateralLiquidatorBefore, netCollateralChange, 1);  // Liquidator receives expected collateral
+      assertApproxEqAbs(balances.collateralATokenBefore    - balances.collateralATokenAfter,      netCollateralChange, 1);  // Collateral aToken liquidity decreases by expected amount
+      // TODO: Add liquidation bonus assertions
+      return;
+    }
+
+    assertLt(balances.borrowLiquidatorAfter, balances.borrowLiquidatorBefore);  // Liquidator uses borrowAsset to buy collateral
+    assertGt(balances.borrowATokenAfter,     balances.borrowATokenBefore);      // borrowAsset balance of aToken increases
+
+    assertEq(balances.borrowLiquidatorBefore - balances.borrowLiquidatorAfter, balances.debtBefore);  // Liquidator borrowAsset funds equal amount removed from debt accounting
+    assertEq(balances.borrowATokenAfter      - balances.borrowATokenBefore,    balances.debtBefore);  // aToken liquidity increases by same amount
+
+    // 1 unit diff to account for liquidity index calculation on _transfer in aToken
+    assertApproxEqAbs(balances.collateralLiquidatorAfter - balances.collateralLiquidatorBefore, totalCollateralToLiquidate - amountToProtocol, 1);  // Liquidator receives expected collateral
+    assertApproxEqAbs(balances.collateralATokenBefore    - balances.collateralATokenAfter,      totalCollateralToLiquidate - amountToProtocol, 1);  // Collateral aToken liquidity decreases by expected amount
+
+    // The amount of collateral that the liquidator receives is equal to the amount of aTokens that the Borrower lost, minus the portion
+    // of the borrower's aTokens that were transferred to the treasury during the liquidation.
+    assertApproxEqAbs(
+      balances.collateralLiquidatorAfter - balances.collateralLiquidatorBefore,
+      (balances.aTokenBorrowerBefore - balances.aTokenBorrowerAfter) - (balances.aTokenTreasuryAfter - balances.aTokenTreasuryBefore),
+      1
+    );
+  }
+
+  function _getLiquidationAmounts(
+    ReserveConfig memory collateral,
+    ReserveConfig memory borrow,
+    IPool pool,
+    uint256 debtToCover
+  )
+    internal view returns (uint256 totalCollateralToLiquidate, uint256 amountToProtocol)
+  {
+    uint256 baseCollateralToLiquidate =
+      debtToCover
+        * _getTokenPrice(pool, borrow)
+        * 10 ** collateral.decimals
+        / _getTokenPrice(pool, collateral)
+        / 10 ** borrow.decimals;
+
+    totalCollateralToLiquidate = baseCollateralToLiquidate * collateral.liquidationBonus / 100_00;
+
+    // Recalculating this here to follow same math to capture rounding errors.
+    uint256 bonusCollateral = totalCollateralToLiquidate - totalCollateralToLiquidate * 100_00 / collateral.liquidationBonus;
+
+    amountToProtocol = bonusCollateral * collateral.liquidationProtocolFee / 100_00;
   }
 
   function _formattedAmount(uint256 amount, uint256 decimals) internal pure returns (string memory) {
