@@ -148,8 +148,6 @@ contract ProtocolV3TestBase is CommonTestBase {
           continue;
         }
 
-        console.log("i %s, j %s", i, j);
-
         e2eTestAsset(pool, configs[i], configs[j]);
         vm.revertTo(snapshot);
       }
@@ -620,9 +618,6 @@ contract ProtocolV3TestBase is CommonTestBase {
 
     address debtToken = borrow.variableDebtToken;
 
-    vm.startPrank(liquidator);
-    IERC20(borrow.underlying).approve(address(pool), amount);
-
     LiquidationBalanceAssertions memory balances;
 
     balances.aTokenBorrowerBefore = IERC20(collateral.aToken).balanceOf(user);
@@ -638,12 +633,12 @@ contract ProtocolV3TestBase is CommonTestBase {
 
     // TODO: Add totalSupply assertions
 
+    vm.startPrank(liquidator);
+    IERC20(borrow.underlying).approve(address(pool), amount);
+
     console.log('LIQUIDATE: Collateral: %s, Debt: %s, Debt Amount: %s', collateral.symbol, borrow.symbol, _formattedAmount(amount, borrow.decimals));
     pool.liquidationCall(collateral.underlying, borrow.underlying, user, amount, false);
     vm.stopPrank();
-
-    ( uint256 totalCollateralToLiquidate, uint256 amountToProtocol )
-      = _getLiquidationAmounts(collateral, borrow, pool, balances.debtBefore);
 
     balances.aTokenBorrowerAfter = IERC20(collateral.aToken).balanceOf(user);
     balances.aTokenTreasuryAfter = IERC20(collateral.aToken).balanceOf(IAToken(collateral.aToken).RESERVE_TREASURY_ADDRESS());
@@ -666,6 +661,9 @@ contract ProtocolV3TestBase is CommonTestBase {
     if (collateral.liquidationProtocolFee > 0) {
       assertGt(balances.aTokenTreasuryAfter, balances.aTokenTreasuryBefore);  // Treasury receives collateral aToken if protocol fee > 0
     }
+
+    ( uint256 totalCollateralToLiquidate, uint256 amountToProtocol )
+      = _getLiquidationAmounts(collateral, borrow, pool, balances.debtBefore);
 
     assertApproxEqAbs(balances.aTokenBorrowerBefore - balances.aTokenBorrowerAfter,  totalCollateralToLiquidate, 2);  // Borrower loses all collateral accounting in system
     assertApproxEqAbs(balances.aTokenTreasuryAfter  - balances.aTokenTreasuryBefore, amountToProtocol,           1);  // Treasury receives expected amount in aToken
@@ -1029,7 +1027,6 @@ contract ProtocolV3TestBase is CommonTestBase {
       localConfig.reserveFactor,
       localConfig.eModeCategory
     ) = configuration.getParams();
-    console.log("LOCAL PARAMS", localConfig.liquidationBonus);
     (
       localConfig.isActive,
       localConfig.isFrozen,
