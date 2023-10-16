@@ -19,3 +19,5 @@ These helpers allow you to simulate execution of proposals on governance control
 The ProtocolV3TestBase is intended to be used with proposals that alter a V3 pool. While the `helpers` are libraries, you can use from where ever you want `ProtocolV3TestBase` is intended to be inherited from in your test via `is ProtocolV3TestBase`.
 
 When inheriting from `ProtocolV3TestBase` you have access to methods to create readable configuration snapshots of a pool and e2e tests of a pool.
+***
+*The IP in this repository was assigned to Mars SPC Limited in respect of the MarsOne SP*
